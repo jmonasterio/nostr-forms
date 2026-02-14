@@ -1,0 +1,41 @@
+[Unit]
+Description=nostr-form-rs - Encrypted Nostr Form Processor
+Documentation=https://github.com/jgensler8/nostr-form-rs
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=nostr-form-rs
+Group=nostr-form-rs
+ExecStart=/usr/local/bin/nostr-form-rs --config /etc/nostr-form-rs/config.json
+Restart=on-failure
+RestartSec=5
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=nostr-form-rs
+
+# Security hardening
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+MemoryDenyWriteExecute=true
+LockPersonality=true
+
+# Allow write to data directory
+ReadWritePaths=/var/lib/nostr-form-rs
+
+# Working directory
+WorkingDirectory=/var/lib/nostr-form-rs
+
+[Install]
+WantedBy=multi-user.target

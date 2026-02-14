@@ -1,0 +1,91 @@
+name: Deploy to argw.com
+
+on:
+  push:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
+
+      - name: Build release binary
+        run: cargo build --release
+
+      - name: Deploy to server
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          SERVER_HOST: argw.com
+          SERVER_USER: ${{ secrets.DEPLOY_USER }}
+        run: |
+          # Setup SSH
+          mkdir -p ~/.ssh
+          echo "$SSH_PRIVATE_KEY" > ~/.ssh/id_ed25519
+          chmod 600 ~/.ssh/id_ed25519
+          ssh-keyscan -H $SERVER_HOST >> ~/.ssh/known_hosts
+
+          # Copy binary
+          scp target/release/nostr-form-rs ${SERVER_USER}@${SERVER_HOST}:/tmp/nostr-form-rs.new
+
+          # Copy web assets
+          scp -r web ${SERVER_USER}@${SERVER_HOST}:/tmp/nostr-form-rs-web
+
+          # Deploy on server
+          ssh ${SERVER_USER}@${SERVER_HOST} << 'ENDSSH'
+            set -e
+
+            # Stop service
+            sudo systemctl stop nostr-form-rs || true
+
+            # Install binary
+            sudo mv /tmp/nostr-form-rs.new /usr/local/bin/nostr-form-rs
+            sudo chmod +x /usr/local/bin/nostr-form-rs
+
+            # Install web assets
+            sudo mkdir -p /var/www/nostr-form-rs
+            sudo cp -r /tmp/nostr-form-rs-web/* /var/www/nostr-form-rs/
+            sudo chown -R www-data:www-data /var/www/nostr-form-rs
+            rm -rf /tmp/nostr-form-rs-web
+
+            # Ensure config exists
+            if [ ! -f /etc/nostr-form-rs/config.json ]; then
+              sudo mkdir -p /etc/nostr-form-rs
+              sudo tee /etc/nostr-form-rs/config.json << 'EOF'
+{
+  "relay_url": "ws://127.0.0.1:8080",
+  "database_path": "/var/lib/nostr-form-rs/forms.db",
+  "api_bind_addr": "127.0.0.1:8081",
+  "default_pow_difficulty": 16,
+  "bootstrap_admin_pubkey": null
+}
+EOF
+              sudo chown root:root /etc/nostr-form-rs/config.json
+              sudo chmod 644 /etc/nostr-form-rs/config.json
+            fi
+
+            # Ensure data directory
+            sudo mkdir -p /var/lib/nostr-form-rs
+            sudo chown nostr-form-rs:nostr-form-rs /var/lib/nostr-form-rs || true
+
+            # Start service
+            sudo systemctl start nostr-form-rs
+            sudo systemctl status nostr-form-rs --no-pager
+          ENDSSH
+
+      - name: Cleanup SSH key
+        if: always()
+        run: rm -f ~/.ssh/id_ed25519

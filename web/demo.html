@@ -1,0 +1,195 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>nostr-form-rs Demo</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #c9d1d9;
+      --text-muted: #8b949e;
+      --primary: #58a6ff;
+      --success: #3fb950;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 2rem;
+      line-height: 1.5;
+    }
+
+    .container {
+      max-width: 600px;
+      margin: 0 auto;
+    }
+
+    h1 { font-size: 1.5rem; margin-bottom: 1rem; }
+    p { color: var(--text-muted); }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1.5rem;
+      margin-top: 2rem;
+    }
+
+    .form-group { margin-bottom: 1rem; }
+
+    label {
+      display: block;
+      font-size: 0.875rem;
+      font-weight: 500;
+      margin-bottom: 0.5rem;
+    }
+
+    input, textarea {
+      width: 100%;
+      padding: 0.5rem 0.75rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.875rem;
+      box-sizing: border-box;
+    }
+
+    input:focus, textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
+
+    textarea { min-height: 100px; resize: vertical; }
+
+    button {
+      background: var(--primary);
+      color: white;
+      border: none;
+      padding: 0.75rem 1.5rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+    }
+
+    button:hover { opacity: 0.9; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .progress {
+      margin-top: 1rem;
+      padding: 0.75rem;
+      background: var(--bg);
+      border-radius: 6px;
+      font-size: 0.875rem;
+    }
+
+    .nostr-form-success {
+      color: var(--success);
+      padding: 1rem;
+      text-align: center;
+    }
+
+    .config {
+      background: var(--bg);
+      border-radius: 6px;
+      padding: 1rem;
+      font-size: 0.75rem;
+      font-family: monospace;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>nostr-form-rs Demo</h1>
+    <p>
+      This is a demo of the encrypted contact form. Messages are encrypted to
+      the processor's pubkey and delivered as Nostr DMs.
+    </p>
+
+    <div class="config">
+      <strong>Configuration:</strong><br>
+      Relay: <span id="relay-url">ws://127.0.0.1:8080</span><br>
+      Processor: <span id="processor-pubkey">(not configured)</span>
+    </div>
+
+    <div class="card">
+      <form data-nostr-form="demo123">
+        <div class="form-group">
+          <label for="name">Name</label>
+          <input type="text" id="name" name="name" required placeholder="John Doe">
+        </div>
+        <div class="form-group">
+          <label for="email">Email</label>
+          <input type="email" id="email" name="email" required placeholder="john@example.com">
+        </div>
+        <div class="form-group">
+          <label for="message">Message</label>
+          <textarea id="message" name="message" required placeholder="Your message..."></textarea>
+        </div>
+        <button type="submit" id="submit-btn">Send Message</button>
+      </form>
+      <div id="progress" class="progress" style="display: none;"></div>
+    </div>
+  </div>
+
+  <script type="module">
+    import { NostrForms } from './forms.js';
+
+    // Configuration - replace with your actual values
+    const RELAY_URL = 'ws://127.0.0.1:8080';
+    const PROCESSOR_PUBKEY = '0000000000000000000000000000000000000000000000000000000000000000'; // Replace!
+
+    document.getElementById('relay-url').textContent = RELAY_URL;
+    document.getElementById('processor-pubkey').textContent = PROCESSOR_PUBKEY.substring(0, 16) + '...';
+
+    const progressEl = document.getElementById('progress');
+
+    NostrForms.init({
+      relayUrl: RELAY_URL,
+      processorPubkey: PROCESSOR_PUBKEY,
+      powDifficulty: 12, // Lower for demo
+
+      onProgress: (stage, data) => {
+        progressEl.style.display = 'block';
+        switch (stage) {
+          case 'encrypting':
+            progressEl.textContent = 'Encrypting message...';
+            break;
+          case 'mining':
+            progressEl.textContent = data 
+              ? `Mining proof-of-work... (${data.nonce.toLocaleString()} attempts)`
+              : 'Mining proof-of-work...';
+            break;
+          case 'publishing':
+            progressEl.textContent = 'Publishing to relay...';
+            break;
+        }
+      },
+
+      onSuccess: (eventId) => {
+        progressEl.style.display = 'none';
+        const form = document.querySelector('[data-nostr-form]');
+        form.innerHTML = `
+          <div class="nostr-form-success">
+            <p>Thank you! Your message has been sent.</p>
+            <p style="font-size: 0.75rem; color: var(--text-muted);">
+              Event ID: ${eventId.substring(0, 16)}...
+            </p>
+          </div>
+        `;
+      },
+
+      onError: (err) => {
+        progressEl.style.display = 'none';
+        alert('Failed to send: ' + err.message);
+      }
+    });
+  </script>
+</body>
+</html>

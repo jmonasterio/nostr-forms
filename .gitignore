@@ -1,0 +1,29 @@
+# Build artifacts
+/target/
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Data
+*.db
+*.db-shm
+*.db-wal
+/data/
+
+# Config with secrets
+config.json
+
+# Logs
+*.log
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Node
+web/node_modules/
+web/package-lock.json

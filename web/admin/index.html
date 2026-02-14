@@ -1,0 +1,615 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>nostr-form-rs Admin</title>
+  <style>
+    :root {
+      --bg: #0d1117;
+      --surface: #161b22;
+      --border: #30363d;
+      --text: #c9d1d9;
+      --text-muted: #8b949e;
+      --primary: #58a6ff;
+      --success: #3fb950;
+      --error: #f85149;
+      --warning: #d29922;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      margin: 0;
+      padding: 0;
+      line-height: 1.5;
+    }
+
+    .container {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 2rem;
+    }
+
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 2rem;
+      padding-bottom: 1rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    h1 { margin: 0; font-size: 1.5rem; font-weight: 600; }
+    h2 { font-size: 1.25rem; font-weight: 600; margin: 0 0 1rem 0; }
+
+    button {
+      background: var(--primary);
+      color: white;
+      border: none;
+      padding: 0.5rem 1rem;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+    }
+
+    button:hover { opacity: 0.9; }
+    button.secondary { background: var(--surface); border: 1px solid var(--border); color: var(--text); }
+    button.danger { background: var(--error); }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1.5rem;
+      margin-bottom: 1rem;
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+
+    .card-title { font-weight: 600; font-size: 1rem; }
+
+    .badge {
+      display: inline-block;
+      padding: 0.25rem 0.5rem;
+      border-radius: 9999px;
+      font-size: 0.75rem;
+      font-weight: 500;
+    }
+
+    .badge.active { background: var(--success); color: white; }
+    .badge.paused { background: var(--warning); color: black; }
+    .badge.pending { background: var(--text-muted); color: white; }
+    .badge.delivered { background: var(--success); color: white; }
+    .badge.failed { background: var(--error); color: white; }
+
+    .form-group { margin-bottom: 1rem; }
+
+    label {
+      display: block;
+      font-size: 0.875rem;
+      font-weight: 500;
+      margin-bottom: 0.5rem;
+      color: var(--text);
+    }
+
+    input, textarea {
+      width: 100%;
+      padding: 0.5rem 0.75rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.875rem;
+    }
+
+    input:focus, textarea:focus {
+      outline: none;
+      border-color: var(--primary);
+    }
+
+    textarea {
+      min-height: 100px;
+      font-family: monospace;
+    }
+
+    .code-block {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1rem;
+      font-family: monospace;
+      font-size: 0.875rem;
+      overflow-x: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .table { width: 100%; border-collapse: collapse; }
+    .table th, .table td { padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
+    .table th { font-weight: 600; color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; }
+    .table tr:hover { background: rgba(255, 255, 255, 0.02); }
+
+    .modal-backdrop {
+      position: fixed;
+      top: 0; left: 0; right: 0; bottom: 0;
+      background: rgba(0, 0, 0, 0.7);
+      display: none;
+      align-items: center;
+      justify-content: center;
+      z-index: 1000;
+    }
+    .modal-backdrop.active { display: flex; }
+
+    .modal {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 1.5rem;
+      max-width: 500px;
+      width: 100%;
+      margin: 1rem;
+    }
+
+    .modal-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 1rem;
+    }
+
+    .modal-footer {
+      display: flex;
+      justify-content: flex-end;
+      gap: 0.5rem;
+      margin-top: 1.5rem;
+    }
+
+    .text-muted { color: var(--text-muted); }
+    .text-mono { font-family: monospace; font-size: 0.875rem; }
+    .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
+
+    .tabs {
+      display: flex;
+      gap: 0.5rem;
+      margin-bottom: 1.5rem;
+      border-bottom: 1px solid var(--border);
+    }
+
+    .tab {
+      padding: 0.75rem 1rem;
+      border: none;
+      background: none;
+      color: var(--text-muted);
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      margin-bottom: -1px;
+    }
+    .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
+
+    .empty-state { text-align: center; padding: 3rem; color: var(--text-muted); }
+    .loading { text-align: center; padding: 2rem; color: var(--text-muted); }
+
+    #login-screen {
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-height: 80vh;
+      text-align: center;
+    }
+
+    #login-screen h1 { margin-bottom: 1rem; }
+    #login-screen p { color: var(--text-muted); margin-bottom: 2rem; }
+    #login-error { color: var(--error); margin-top: 1rem; }
+
+    .user-info {
+      display: flex;
+      align-items: center;
+      gap: 1rem;
+    }
+    .user-pubkey {
+      font-family: monospace;
+      font-size: 0.75rem;
+      color: var(--text-muted);
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <!-- Login Screen -->
+    <div id="login-screen">
+      <h1>nostr-form-rs Admin</h1>
+      <p>Sign in with your Nostr identity to manage forms.</p>
+      <button id="login-btn" onclick="login()">Sign in with Nostr</button>
+      <div id="login-error"></div>
+    </div>
+
+    <!-- Main App (hidden until logged in) -->
+    <div id="app" style="display: none;">
+      <header>
+        <h1>nostr-form-rs</h1>
+        <div class="user-info">
+          <span class="user-pubkey" id="user-pubkey"></span>
+          <button class="secondary" onclick="logout()">Sign out</button>
+          <button id="new-form-btn">+ New Form</button>
+        </div>
+      </header>
+
+      <div class="tabs">
+        <button class="tab active" data-tab="forms">Forms</button>
+        <button class="tab" data-tab="submissions">Recent Submissions</button>
+      </div>
+
+      <div id="forms-tab">
+        <div id="forms-list" class="loading">Loading...</div>
+      </div>
+
+      <div id="submissions-tab" style="display: none;">
+        <div id="submissions-list" class="loading">Loading...</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- New Form Modal -->
+  <div class="modal-backdrop" id="new-form-modal">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Create New Form</h2>
+        <button class="secondary" onclick="closeModal('new-form-modal')">&times;</button>
+      </div>
+      <form id="new-form-form">
+        <div class="form-group">
+          <label for="form-name">Form Name</label>
+          <input type="text" id="form-name" name="name" required placeholder="Contact Form">
+        </div>
+        <div class="form-group">
+          <label for="notify-pubkey">Notify Pubkey (receives submissions as DM)</label>
+          <input type="text" id="notify-pubkey" name="notify_pubkey" required placeholder="64-char hex pubkey" pattern="[a-fA-F0-9]{64}">
+          <button type="button" class="secondary" style="margin-top: 0.5rem;" onclick="useMyPubkey()">Use my pubkey</button>
+        </div>
+        <div class="form-group">
+          <label for="pow-difficulty">PoW Difficulty</label>
+          <input type="number" id="pow-difficulty" name="pow_difficulty" value="16" min="8" max="24">
+        </div>
+        <div class="modal-footer">
+          <button type="button" class="secondary" onclick="closeModal('new-form-modal')">Cancel</button>
+          <button type="submit">Create Form</button>
+        </div>
+      </form>
+    </div>
+  </div>
+
+  <!-- Form Detail Modal -->
+  <div class="modal-backdrop" id="form-detail-modal">
+    <div class="modal" style="max-width: 700px;">
+      <div class="modal-header">
+        <h2 id="detail-form-name">Form Details</h2>
+        <button class="secondary" onclick="closeModal('form-detail-modal')">&times;</button>
+      </div>
+      <div id="form-detail-content"></div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = '/api';
+    let userPubkey = null;
+
+    // ==================== Auth ====================
+
+    async function login() {
+      const errorEl = document.getElementById('login-error');
+      errorEl.textContent = '';
+
+      if (!window.nostr) {
+        errorEl.textContent = 'No Nostr extension found. Install Alby, nos2x, or similar.';
+        return;
+      }
+
+      try {
+        // Get pubkey from extension
+        userPubkey = await window.nostr.getPublicKey();
+        document.getElementById('user-pubkey').textContent = userPubkey.substring(0, 16) + '...';
+
+        // Test auth by fetching forms
+        await apiFetch('/forms');
+
+        // Success - show app
+        document.getElementById('login-screen').style.display = 'none';
+        document.getElementById('app').style.display = 'block';
+        loadForms();
+      } catch (err) {
+        console.error('Login failed:', err);
+        if (err.message.includes('403') || err.message.includes('Forbidden')) {
+          errorEl.textContent = 'Access denied. Your pubkey is not an admin.';
+        } else if (err.message.includes('401')) {
+          errorEl.textContent = 'Authentication failed. Please try again.';
+        } else {
+          errorEl.textContent = 'Login failed: ' + err.message;
+        }
+        userPubkey = null;
+      }
+    }
+
+    function logout() {
+      userPubkey = null;
+      document.getElementById('login-screen').style.display = 'flex';
+      document.getElementById('app').style.display = 'none';
+    }
+
+    async function getAuthHeader() {
+      if (!window.nostr || !userPubkey) {
+        throw new Error('Not logged in');
+      }
+
+      const event = {
+        kind: 27235,
+        created_at: Math.floor(Date.now() / 1000),
+        tags: [
+          ['u', window.location.origin + '/api'],
+          ['method', 'GET']
+        ],
+        content: ''
+      };
+
+      const signedEvent = await window.nostr.signEvent(event);
+      const eventJson = JSON.stringify(signedEvent);
+      const eventB64 = btoa(eventJson);
+
+      return 'Nostr ' + eventB64;
+    }
+
+    async function apiFetch(path, options = {}) {
+      const authHeader = await getAuthHeader();
+      
+      const response = await fetch(API_BASE + path, {
+        ...options,
+        headers: {
+          ...options.headers,
+          'Authorization': authHeader,
+          'Content-Type': 'application/json'
+        }
+      });
+
+      if (!response.ok) {
+        const text = await response.text();
+        throw new Error(`${response.status}: ${text}`);
+      }
+
+      return response.json();
+    }
+
+    // ==================== UI ====================
+
+    document.querySelectorAll('.tab').forEach(tab => {
+      tab.addEventListener('click', () => {
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        tab.classList.add('active');
+
+        const tabName = tab.dataset.tab;
+        document.getElementById('forms-tab').style.display = tabName === 'forms' ? 'block' : 'none';
+        document.getElementById('submissions-tab').style.display = tabName === 'submissions' ? 'block' : 'none';
+
+        if (tabName === 'submissions') {
+          loadRecentSubmissions();
+        }
+      });
+    });
+
+    function openModal(id) {
+      document.getElementById(id).classList.add('active');
+    }
+
+    function closeModal(id) {
+      document.getElementById(id).classList.remove('active');
+    }
+
+    document.getElementById('new-form-btn').addEventListener('click', () => {
+      openModal('new-form-modal');
+    });
+
+    function useMyPubkey() {
+      if (userPubkey) {
+        document.getElementById('notify-pubkey').value = userPubkey;
+      }
+    }
+
+    // ==================== Forms ====================
+
+    async function loadForms() {
+      try {
+        const forms = await apiFetch('/forms');
+        const container = document.getElementById('forms-list');
+
+        if (forms.length === 0) {
+          container.innerHTML = '<div class="empty-state"><p>No forms yet. Create your first form to get started.</p></div>';
+          return;
+        }
+
+        container.innerHTML = forms.map(form => `
+          <div class="card">
+            <div class="card-header">
+              <span class="card-title">${escapeHtml(form.name)}</span>
+              <span class="badge ${form.status}">${form.status}</span>
+            </div>
+            <p class="text-muted text-mono truncate">${form.form_id}</p>
+            <button class="secondary" onclick="showFormDetail('${form.form_id}')">View Details</button>
+          </div>
+        `).join('');
+      } catch (err) {
+        document.getElementById('forms-list').innerHTML = `
+          <div class="empty-state"><p>Failed to load forms: ${err.message}</p></div>
+        `;
+      }
+    }
+
+    async function showFormDetail(formId) {
+      try {
+        const [form, embed] = await Promise.all([
+          apiFetch(`/forms/${formId}`),
+          apiFetch(`/forms/${formId}/embed`)
+        ]);
+
+        document.getElementById('detail-form-name').textContent = form.name;
+        document.getElementById('form-detail-content').innerHTML = `
+          <div class="form-group">
+            <label>Form ID</label>
+            <div class="code-block">${form.form_id}</div>
+          </div>
+          <div class="form-group">
+            <label>Notify Pubkey</label>
+            <div class="code-block">${form.notify_pubkey}</div>
+          </div>
+          <div class="form-group">
+            <label>PoW Difficulty</label>
+            <div class="code-block">${form.pow_difficulty} bits</div>
+          </div>
+          <div class="form-group">
+            <label>Embed Code</label>
+            <div class="code-block">${escapeHtml(embed.html)}</div>
+          </div>
+          <div class="modal-footer">
+            <button class="secondary" onclick="loadFormSubmissions('${formId}')">View Submissions</button>
+          </div>
+        `;
+
+        openModal('form-detail-modal');
+      } catch (err) {
+        alert('Failed to load form: ' + err.message);
+      }
+    }
+
+    document.getElementById('new-form-form').addEventListener('submit', async (e) => {
+      e.preventDefault();
+      const form = e.target;
+      const data = {
+        name: form.name.value,
+        notify_pubkey: form.notify_pubkey.value,
+        pow_difficulty: parseInt(form.pow_difficulty.value) || 16
+      };
+
+      try {
+        const result = await apiFetch('/forms', {
+          method: 'POST',
+          body: JSON.stringify(data)
+        });
+
+        closeModal('new-form-modal');
+        form.reset();
+        loadForms();
+        showFormDetail(result.form_id);
+      } catch (err) {
+        alert('Failed to create form: ' + err.message);
+      }
+    });
+
+    // ==================== Submissions ====================
+
+    async function loadRecentSubmissions() {
+      try {
+        const forms = await apiFetch('/forms');
+
+        if (forms.length === 0) {
+          document.getElementById('submissions-list').innerHTML = '<div class="empty-state"><p>No forms configured.</p></div>';
+          return;
+        }
+
+        // Load submissions from first form
+        const submissions = await apiFetch(`/forms/${forms[0].form_id}/submissions?limit=20`);
+        renderSubmissions(submissions);
+      } catch (err) {
+        document.getElementById('submissions-list').innerHTML = `
+          <div class="empty-state"><p>Failed to load submissions: ${err.message}</p></div>
+        `;
+      }
+    }
+
+    async function loadFormSubmissions(formId) {
+      try {
+        const submissions = await apiFetch(`/forms/${formId}/submissions?limit=50`);
+
+        closeModal('form-detail-modal');
+        document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+        document.querySelector('[data-tab="submissions"]').classList.add('active');
+        document.getElementById('forms-tab').style.display = 'none';
+        document.getElementById('submissions-tab').style.display = 'block';
+
+        renderSubmissions(submissions);
+      } catch (err) {
+        alert('Failed to load submissions: ' + err.message);
+      }
+    }
+
+    function renderSubmissions(submissions) {
+      const container = document.getElementById('submissions-list');
+
+      if (submissions.length === 0) {
+        container.innerHTML = '<div class="empty-state"><p>No submissions yet.</p></div>';
+        return;
+      }
+
+      container.innerHTML = `
+        <table class="table">
+          <thead>
+            <tr>
+              <th>Time</th>
+              <th>Form</th>
+              <th>Sender</th>
+              <th>Status</th>
+              <th>Actions</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${submissions.map(sub => `
+              <tr>
+                <td>${new Date(sub.received_at * 1000).toLocaleString()}</td>
+                <td class="text-mono truncate">${sub.form_id}</td>
+                <td class="text-mono truncate">${sub.sender_pubkey.substring(0, 16)}...</td>
+                <td><span class="badge ${sub.delivery_status}">${sub.delivery_status}</span></td>
+                <td>
+                  ${sub.delivery_status === 'failed' ? 
+                    `<button class="secondary" onclick="retrySubmission('${sub.event_id}')">Retry</button>` : 
+                    ''}
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      `;
+    }
+
+    async function retrySubmission(eventId) {
+      try {
+        await apiFetch(`/submissions/${eventId}/retry`, { method: 'POST' });
+        alert('Queued for retry');
+        loadRecentSubmissions();
+      } catch (err) {
+        alert('Retry failed: ' + err.message);
+      }
+    }
+
+    function escapeHtml(str) {
+      const div = document.createElement('div');
+      div.textContent = str;
+      return div.innerHTML;
+    }
+
+    // Check if already have extension
+    if (window.nostr) {
+      document.getElementById('login-btn').textContent = 'Sign in with Nostr';
+    } else {
+      document.getElementById('login-btn').textContent = 'Install Nostr Extension';
+    }
+  </script>
+</body>
+</html>

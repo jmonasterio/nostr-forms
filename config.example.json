@@ -1,0 +1,7 @@
+{
+  "relay_url": "ws://127.0.0.1:8080",
+  "database_path": "./forms.db",
+  "api_bind_addr": "127.0.0.1:8081",
+  "default_pow_difficulty": 16,
+  "bootstrap_admin_pubkey": "YOUR_NOSTR_PUBKEY_HEX_64_CHARS"
+}

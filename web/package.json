@@ -1,0 +1,17 @@
+{
+  "name": "nostr-form-sdk",
+  "version": "0.1.0",
+  "description": "Browser SDK for nostr-form-rs",
+  "type": "module",
+  "main": "forms.js",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "devDependencies": {
+    "vitest": "^1.0.0"
+  },
+  "dependencies": {
+    "nostr-tools": "^2.0.0"
+  }
+}
