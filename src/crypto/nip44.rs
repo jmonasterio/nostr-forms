@@ -113,20 +113,13 @@ fn derive_message_keys(
     nonce: &[u8],
 ) -> anyhow::Result<([u8; 32], [u8; 24])> {
     let hk = Hkdf::<Sha256>::new(Some(nonce), conversation_key);
-
+    let mut output = [0u8; 76]; // 32 (key) + 12 (nonce) + 32 (extra for full expansion)
+    hk.expand(b"", &mut output)
+        .map_err(|_| anyhow::anyhow!("HKDF expand failed"))?;
     let mut chacha_key = [0u8; 32];
     let mut chacha_nonce = [0u8; 24];
-
-    hk.expand(b"nip44-v2", &mut chacha_key)
-        .map_err(|_| anyhow::anyhow!("HKDF expand key failed"))?;
-
-    // For the nonce, we use a second HKDF expansion
-    let mut nonce_material = [0u8; 24];
-    let hk2 = Hkdf::<Sha256>::new(Some(&chacha_key), nonce);
-    hk2.expand(b"nip44-v2", &mut nonce_material)
-        .map_err(|_| anyhow::anyhow!("HKDF expand nonce failed"))?;
-    chacha_nonce.copy_from_slice(&nonce_material);
-
+    chacha_key.copy_from_slice(&output[0..32]);
+    chacha_nonce.copy_from_slice(&output[32..56]);
     Ok((chacha_key, chacha_nonce))
 }
 
