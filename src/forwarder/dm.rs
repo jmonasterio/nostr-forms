@@ -49,7 +49,7 @@ pub async fn send_dm(
         0,
         processor_pubkey_hex,
         created_at,
-        4,  // kind 4 = encrypted DM
+        4, // kind 4 = encrypted DM
         [["p", notify_pubkey]],
         encrypted_content
     ]);
@@ -93,7 +93,10 @@ pub async fn send_dm(
                         if accepted {
                             return Ok(());
                         } else {
-                            let reason = response.get(3).and_then(|v| v.as_str()).unwrap_or("unknown");
+                            let reason = response
+                                .get(3)
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("unknown");
                             anyhow::bail!("Relay rejected DM: {}", reason);
                         }
                     }
@@ -106,7 +109,11 @@ pub async fn send_dm(
 
     match result {
         Ok(Ok(())) => {
-            tracing::info!("DM sent to {} for form '{}'", &notify_pubkey[..16], form_name);
+            tracing::info!(
+                "DM sent to {} for form '{}'",
+                &notify_pubkey[..16],
+                form_name
+            );
             Ok(())
         }
         Ok(Err(e)) => Err(e),

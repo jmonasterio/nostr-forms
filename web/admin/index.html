@@ -306,86 +306,101 @@
     let userPubkey = null;
 
     // ==================== Auth ====================
+    // Bech32 npub -> hex (NIP-07 should return hex but some Alby versions return npub)
+    function npubToHex(npub) {
+      const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+      const data = npub.slice(npub.indexOf('1') + 1);
+      let acc = 0, bits = 0, result = [];
+      for (let i = 0; i < data.length - 6; i++) {
+        acc = (acc << 5) | CHARSET.indexOf(data[i]);
+        bits += 5;
+        while (bits >= 8) { bits -= 8; result.push((acc >> bits) & 0xff); }
+      }
+      return result.map(b => b.toString(16).padStart(2, '0')).join('');
+    }
 
+    // Signed token cache — keyed by method, valid 50s
+    let authCache = {};
+
+    // Sign a NIP-98 token directly within a user gesture.
+    // Must be called with no awaits before it in the gesture chain.
+    async function signAuthToken(method, url) {
+      const now = Math.floor(Date.now() / 1000);
+      const signed = await window.nostr.signEvent({
+        kind: 27235,
+        created_at: now,
+        tags: [['u', url], ['method', method]],
+        content: ''
+      });
+      const header = 'Nostr ' + btoa(JSON.stringify(signed));
+      authCache[method] = { header, expiresAt: now + 50 };
+      return header;
+    }
+
+    async function getAuthHeader(method, url) {
+      const now = Math.floor(Date.now() / 1000);
+      const cached = authCache[method];
+      if (cached && cached.expiresAt > now) return cached.header;
+      // Cache miss — must sign. This is only safe inside a user gesture.
+      return signAuthToken(method, url);
+    }
+
+    // Login: called directly from onclick — we are inside a user gesture.
+    // Keep the chain as short as possible before signEvent.
     async function login() {
       const errorEl = document.getElementById('login-error');
       errorEl.textContent = '';
-
       if (!window.nostr) {
         errorEl.textContent = 'No Nostr extension found. Install Alby, nos2x, or similar.';
         return;
       }
 
       try {
-        // Get pubkey from extension
-        userPubkey = await window.nostr.getPublicKey();
+        // Step 1: get pubkey (Alby auto-approves this, no popup needed)
+        const raw = await window.nostr.getPublicKey();
+        userPubkey = raw.startsWith('npub') ? npubToHex(raw) : raw;
+
+        // Step 2: sign auth token — still within user gesture, triggers Alby popup
+        const url = window.location.origin + API_BASE + '/forms';
+        const header = await signAuthToken('GET', url);
+
+        // Step 3: fetch with the token we just signed (no re-sign needed)
+        const response = await fetch(API_BASE + '/forms', {
+          headers: { 'Authorization': header, 'Content-Type': 'application/json' }
+        });
+        if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
         document.getElementById('user-pubkey').textContent = userPubkey.substring(0, 16) + '...';
-
-        // Test auth by fetching forms
-        await apiFetch('/forms');
-
-        // Success - show app
         document.getElementById('login-screen').style.display = 'none';
         document.getElementById('app').style.display = 'block';
         loadForms();
       } catch (err) {
         console.error('Login failed:', err);
-        if (err.message.includes('403') || err.message.includes('Forbidden')) {
-          errorEl.textContent = 'Access denied. Your pubkey is not an admin.';
-        } else if (err.message.includes('401')) {
-          errorEl.textContent = 'Authentication failed. Please try again.';
-        } else {
-          errorEl.textContent = 'Login failed: ' + err.message;
-        }
+        errorEl.textContent = 'Login failed: ' + err.message;
         userPubkey = null;
+        authCache = {};
       }
     }
-
     function logout() {
       userPubkey = null;
+      authCache = {};
       document.getElementById('login-screen').style.display = 'flex';
       document.getElementById('app').style.display = 'none';
     }
 
-    async function getAuthHeader() {
-      if (!window.nostr || !userPubkey) {
-        throw new Error('Not logged in');
-      }
-
-      const event = {
-        kind: 27235,
-        created_at: Math.floor(Date.now() / 1000),
-        tags: [
-          ['u', window.location.origin + '/api'],
-          ['method', 'GET']
-        ],
-        content: ''
-      };
-
-      const signedEvent = await window.nostr.signEvent(event);
-      const eventJson = JSON.stringify(signedEvent);
-      const eventB64 = btoa(eventJson);
-
-      return 'Nostr ' + eventB64;
-    }
-
     async function apiFetch(path, options = {}) {
-      const authHeader = await getAuthHeader();
-      
+      const method = (options.method || 'GET').toUpperCase();
+      const url = window.location.origin + API_BASE + path;
+      const authHeader = await getAuthHeader(method, url);
+      // Invalidate cache after a write so next call re-signs with fresh timestamp
+      if (method !== 'GET') delete authCache[method];
       const response = await fetch(API_BASE + path, {
         ...options,
-        headers: {
-          ...options.headers,
-          'Authorization': authHeader,
-          'Content-Type': 'application/json'
-        }
+        headers: { ...options.headers, 'Authorization': authHeader, 'Content-Type': 'application/json' }
       });
-
       if (!response.ok) {
         const text = await response.text();
         throw new Error(`${response.status}: ${text}`);
       }
-
       return response.json();
     }
 
@@ -604,12 +619,32 @@
       return div.innerHTML;
     }
 
-    // Check if already have extension
-    if (window.nostr) {
-      document.getElementById('login-btn').textContent = 'Sign in with Nostr';
-    } else {
-      document.getElementById('login-btn').textContent = 'Install Nostr Extension';
+    // Alby and other extensions inject window.nostr asynchronously.
+    // Poll for up to 2 seconds before giving up.
+    async function waitForNostr(timeoutMs = 2000) {
+      if (window.nostr) return true;
+      return new Promise(resolve => {
+        const start = Date.now();
+        const interval = setInterval(() => {
+          if (window.nostr) {
+            clearInterval(interval);
+            resolve(true);
+          } else if (Date.now() - start >= timeoutMs) {
+            clearInterval(interval);
+            resolve(false);
+          }
+        }, 50);
+      });
     }
+
+    // Update button text once extension status is known
+    waitForNostr().then(found => {
+      document.getElementById('login-btn').textContent = found
+        ? 'Sign in with Nostr'
+        : 'Install Nostr Extension';
+    });
+
+
   </script>
 </body>
 </html>

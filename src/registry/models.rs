@@ -16,16 +16,12 @@ pub struct Form {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum FormStatus {
+    #[default]
     Active,
     Paused,
     Deleted,
-}
-
-impl Default for FormStatus {
-    fn default() -> Self {
-        FormStatus::Active
-    }
 }
 
 /// A form submission
@@ -55,17 +51,13 @@ pub enum SubmissionType {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
+#[derive(Default)]
 pub enum DeliveryStatus {
+    #[default]
     Pending,
     Delivered,
     Failed,
     Exhausted,
-}
-
-impl Default for DeliveryStatus {
-    fn default() -> Self {
-        DeliveryStatus::Pending
-    }
 }
 
 /// Decrypted submission payload

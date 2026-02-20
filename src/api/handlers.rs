@@ -118,7 +118,9 @@ pub async fn create_form(
         form_id: form_id.clone(),
         name: req.name.clone(),
         notify_pubkey: req.notify_pubkey.clone(),
-        pow_difficulty: req.pow_difficulty.unwrap_or(state.config.default_pow_difficulty),
+        pow_difficulty: req
+            .pow_difficulty
+            .unwrap_or(state.config.default_pow_difficulty),
         rate_limit_per_hour: req.rate_limit_per_hour.unwrap_or(100),
         status: FormStatus::Active,
         created_at: now,

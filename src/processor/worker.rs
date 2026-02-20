@@ -14,7 +14,11 @@ use crate::registry::storage::Database;
 use super::decryptor::decrypt_submission;
 
 /// Run the processor worker that subscribes to the relay and processes form submissions
-pub async fn run(relay_url: String, db: Database, processor_privkey: SecretKey) -> anyhow::Result<()> {
+pub async fn run(
+    relay_url: String,
+    db: Database,
+    processor_privkey: SecretKey,
+) -> anyhow::Result<()> {
     let processor_pubkey = {
         let secp = secp256k1::Secp256k1::new();
         let pubkey = secp256k1::PublicKey::from_secret_key(&secp, &processor_privkey);
@@ -140,7 +144,7 @@ async fn handle_event(
     if let Some(tags) = tags {
         for tag in tags {
             if let Some(tag_arr) = tag.as_array() {
-                let tag_name = tag_arr.get(0).and_then(|v| v.as_str()).unwrap_or("");
+                let tag_name = tag_arr.first().and_then(|v| v.as_str()).unwrap_or("");
                 let tag_value = tag_arr.get(1).and_then(|v| v.as_str()).unwrap_or("");
 
                 match tag_name {
@@ -165,10 +169,16 @@ async fn handle_event(
     // Verify PoW
     if pow_difficulty > 0 {
         if !verify_pow(event_id, pow_difficulty) {
-            warn!("Event {} failed PoW verification (claimed {} bits)", event_id, pow_difficulty);
+            warn!(
+                "Event {} failed PoW verification (claimed {} bits)",
+                event_id, pow_difficulty
+            );
             return Ok(());
         }
-        debug!("Event {} passed PoW verification ({} bits)", event_id, pow_difficulty);
+        debug!(
+            "Event {} passed PoW verification ({} bits)",
+            event_id, pow_difficulty
+        );
     }
 
     // Look up form

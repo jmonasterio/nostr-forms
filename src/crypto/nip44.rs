@@ -10,7 +10,7 @@ use chacha20poly1305::{
 };
 use hkdf::Hkdf;
 use rand::RngCore;
-use secp256k1::{ecdh::SharedSecret, PublicKey, Secp256k1, SecretKey};
+use secp256k1::{ecdh::SharedSecret, PublicKey, SecretKey};
 use sha2::Sha256;
 
 const NIP44_VERSION: u8 = 2;
@@ -21,8 +21,6 @@ pub fn encrypt(
     sender_privkey: &SecretKey,
     recipient_pubkey: &PublicKey,
 ) -> anyhow::Result<String> {
-    let secp = Secp256k1::new();
-
     // Compute shared secret using ECDH
     let shared_secret = SharedSecret::new(recipient_pubkey, sender_privkey);
     let conversation_key = derive_conversation_key(shared_secret.as_ref())?;

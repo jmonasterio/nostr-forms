@@ -30,7 +30,7 @@ No backend to maintain. No database to secure. No accounts for visitors.
 - **End-to-end encryption** - Only the processor can read submissions (NIP-44)
 - **Spam resistant** - Proof-of-work required (NIP-13)
 - **Anonymous or authenticated** - Works without accounts, or with Nostr identity (NIP-07)
-- **Relay agnostic** - Works with any Nostr relay, no modifications needed
+- **Relay compatible** - Works with nostr-relay (two-tier auth) or any open Nostr relay
 - **Self-hosted** - Run the processor on your local network
 
 ## Quick Start
@@ -67,12 +67,11 @@ In your relay's config (e.g., nostr-inbox-rs `config.json`):
 
 ```json
 {
-  "authorized_pubkeys": [
-    "your_personal_pubkey",
-    "PROCESSOR_PUBKEY_HEX"
-  ]
+  "local_pubkeys": ["<processor_pubkey_hex>"],
+  "external_pow_bits": 16
 }
 ```
+_This allows the processor (local tier) full access, and allows browser form submissions (ephemeral keys tagging the processor via `#p` with 16-bit PoW) through automatically._
 
 The processor prints its pubkey on startup.
 
@@ -112,6 +111,7 @@ Done. Submissions are encrypted and forwarded to you as Nostr DMs.
 │   Your Website  │────▶│   Any Relay     │◀────│    Processor    │
 │                 │     │                 │     │   (private)     │
 │  • Collect form │     │  • Accept event │     │                 │
+│                 │     │  • Two-tier auth│     │                 │
 │  • Encrypt to   │     │  • Store        │     │  • Subscribe    │
 │    processor    │     │  • Forward      │     │  • Verify PoW   │
 │  • Mine PoW     │     │                 │     │  • Decrypt      │
@@ -213,16 +213,16 @@ If the visitor has a Nostr extension (Alby, nos2x, etc.), they can optionally si
 
 ## Relay Compatibility
 
-Works with **any NIP-01 relay**. Just add the processor's pubkey to the relay's write whitelist.
+Works with **nostr-relay** (two-tier auth model) or any open Nostr relay.
 
-For nostr-inbox-rs:
+For nostr-relay (nostr-inbox-rs):
 ```json
 {
-  "authorized_pubkeys": ["<processor_pubkey>"]
+  "local_pubkeys": ["<processor_pubkey_hex>"],
+  "external_pow_bits": 16
 }
 ```
-
-No other relay changes needed.
+_This allows the processor (local tier) full access, and allows browser form submissions (ephemeral keys tagging the processor via `#p` with 16-bit PoW) through automatically._
 
 ## Development
 

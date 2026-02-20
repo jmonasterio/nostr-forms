@@ -67,8 +67,8 @@ Response:
   import { NostrForms } from 'https://your-cdn.com/forms.js';
   
   NostrForms.init({
-    relayUrl: 'wss://your-relay.com',
-    processorPubkey: 'PROCESSOR_PUBKEY_64_HEX_CHARS'
+    relayUrl: 'wss://relay.argw.com',
+    processorPubkey: '43100984ca619f567af6863c551c7c9ce5b75caead212e9334ca8cc88c9bc6c6'
   });
 </script>
 ```
@@ -102,8 +102,8 @@ Response:
   const statusEl = document.getElementById('status');
   
   NostrForms.init({
-    relayUrl: 'wss://relay.example.com',
-    processorPubkey: '0123456789abcdef...',
+    relayUrl: 'wss://relay.argw.com',
+    processorPubkey: '43100984ca619f567af6863c551c7c9ce5b75caead212e9334ca8cc88c9bc6c6',
     powDifficulty: 16,
     
     onProgress: (stage, data) => {
@@ -248,7 +248,7 @@ Common errors and solutions:
 |-------|-------|----------|
 | `processorPubkey not configured` | Missing init config | Call `NostrForms.init()` with pubkey |
 | `relayUrl not configured` | Missing init config | Call `NostrForms.init()` with relay URL |
-| `Event rejected by relay` | PoW too low or relay issue | Increase PoW difficulty |
+| `Event rejected by relay` | PoW too low, event doesn't tag processor pubkey via `#p`, or relay unreachable | Verify `processorPubkey` in init config matches relay's `local_pubkeys`; check PoW difficulty |
 | `Timeout waiting for relay` | Relay unreachable | Check relay URL and connectivity |
 | `No Nostr extension found` | NIP-07 requested but unavailable | Install Alby/nos2x or disable auth |
 

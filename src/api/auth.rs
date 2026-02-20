@@ -12,10 +12,10 @@ use std::sync::Arc;
 use super::server::AppState;
 
 /// NIP-98 HTTP Auth middleware
-/// 
+///
 /// Expects Authorization header with base64-encoded Nostr event:
 /// Authorization: Nostr <base64-encoded-event>
-/// 
+///
 /// The event must:
 /// - Be kind 27235 (HTTP Auth)
 /// - Have valid signature
@@ -97,13 +97,13 @@ pub async fn require_admin(
     let msg = Message::from_digest_slice(&hex::decode(id).unwrap())
         .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid message hash"))?;
 
-    let sig_bytes = hex::decode(sig)
-        .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid signature hex"))?;
+    let sig_bytes =
+        hex::decode(sig).map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid signature hex"))?;
     let signature = secp256k1::schnorr::Signature::from_slice(&sig_bytes)
         .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid signature"))?;
 
-    let pubkey_bytes = hex::decode(pubkey)
-        .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid pubkey hex"))?;
+    let pubkey_bytes =
+        hex::decode(pubkey).map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid pubkey hex"))?;
     let xonly = secp256k1::XOnlyPublicKey::from_slice(&pubkey_bytes)
         .map_err(|_| (StatusCode::UNAUTHORIZED, "Invalid pubkey"))?;
 

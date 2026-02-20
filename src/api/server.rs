@@ -27,8 +27,7 @@ pub async fn run(bind_addr: String, db: Database, config: Config) -> anyhow::Res
     let state = Arc::new(AppState { db, config });
 
     // Public routes (no auth required)
-    let public_routes = Router::new()
-        .route("/config", get(handlers::get_config));
+    let public_routes = Router::new().route("/config", get(handlers::get_config));
 
     // Admin routes (require NIP-98 auth)
     let admin_routes = Router::new()
@@ -38,23 +37,30 @@ pub async fn run(bind_addr: String, db: Database, config: Config) -> anyhow::Res
         .route("/forms/:form_id", patch(handlers::update_form))
         .route("/forms/:form_id", delete(handlers::delete_form))
         .route("/forms/:form_id/embed", get(handlers::get_embed_code))
-        .route("/forms/:form_id/submissions", get(handlers::list_submissions))
+        .route(
+            "/forms/:form_id/submissions",
+            get(handlers::list_submissions),
+        )
         .route("/submissions/:event_id", get(handlers::get_submission))
-        .route("/submissions/:event_id/retry", post(handlers::retry_submission))
+        .route(
+            "/submissions/:event_id/retry",
+            post(handlers::retry_submission),
+        )
         .route("/admin/pubkeys", post(handlers::add_admin))
         .route("/admin/pubkeys", get(handlers::list_admins))
         .layer(middleware::from_fn_with_state(state.clone(), require_admin));
 
-    let api_routes = Router::new()
-        .merge(public_routes)
-        .merge(admin_routes);
+    let api_routes = Router::new().merge(public_routes).merge(admin_routes);
 
     let app = Router::new()
         .nest("/api", api_routes)
         // Serve static files for admin UI
         .nest_service("/admin", ServeDir::new("web/admin"))
         // Serve forms.js SDK
-        .route_service("/forms.js", tower_http::services::ServeFile::new("web/forms.js"))
+        .route_service(
+            "/forms.js",
+            tower_http::services::ServeFile::new("web/forms.js"),
+        )
         .layer(CorsLayer::permissive())
         .with_state(state);
 

@@ -156,11 +156,8 @@ impl Database {
 
     pub fn admin_count(&self) -> anyhow::Result<i64> {
         let conn = self.conn.lock().unwrap();
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM admin_pubkeys",
-            [],
-            |row| row.get(0),
-        )?;
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM admin_pubkeys", [], |row| row.get(0))?;
         Ok(count)
     }
 
@@ -398,38 +395,6 @@ impl Database {
         Ok(())
     }
 
-    pub fn get_pending_submissions(&self) -> anyhow::Result<Vec<Submission>> {
-        let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT event_id, form_id, sender_pubkey, submission_type, encrypted_content,
-                    decrypted_content, received_at, processed_at, delivery_status,
-                    delivery_attempts, last_delivery_error
-             FROM submissions WHERE delivery_status IN ('pending', 'failed')
-             AND delivery_attempts < 5
-             ORDER BY received_at ASC LIMIT 100",
-        )?;
-
-        let submissions = stmt
-            .query_map([], |row| {
-                Ok(Submission {
-                    event_id: row.get(0)?,
-                    form_id: row.get(1)?,
-                    sender_pubkey: row.get(2)?,
-                    submission_type: str_to_submission_type(&row.get::<_, String>(3)?),
-                    encrypted_content: row.get(4)?,
-                    decrypted_content: row.get(5)?,
-                    received_at: row.get(6)?,
-                    processed_at: row.get(7)?,
-                    delivery_status: str_to_delivery_status(&row.get::<_, String>(8)?),
-                    delivery_attempts: row.get(9)?,
-                    last_delivery_error: row.get(10)?,
-                })
-            })?
-            .collect::<SqliteResult<Vec<_>>>()?;
-
-        Ok(submissions)
-    }
-
     pub fn submission_exists(&self, event_id: &str) -> anyhow::Result<bool> {
         let conn = self.conn.lock().unwrap();
         let count: i64 = conn.query_row(
@@ -442,7 +407,12 @@ impl Database {
 
     // ==================== Rate Limiting ====================
 
-    pub fn check_rate_limit(&self, key: &str, limit: u32, window_seconds: i64) -> anyhow::Result<bool> {
+    pub fn check_rate_limit(
+        &self,
+        key: &str,
+        limit: u32,
+        window_seconds: i64,
+    ) -> anyhow::Result<bool> {
         let conn = self.conn.lock().unwrap();
         let now = chrono::Utc::now().timestamp();
 
