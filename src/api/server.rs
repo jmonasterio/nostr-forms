@@ -14,22 +14,26 @@ use crate::registry::storage::Database;
 
 use super::auth::require_admin;
 use super::handlers;
+use super::session::SessionStore;
 
 /// Application state shared across handlers
 #[derive(Clone)]
 pub struct AppState {
     pub db: Database,
     pub config: Config,
+    pub sessions: Arc<SessionStore>,
 }
 
 /// Start the HTTP API server
 pub async fn run(bind_addr: String, db: Database, config: Config) -> anyhow::Result<()> {
-    let state = Arc::new(AppState { db, config });
+    let state = Arc::new(AppState { db, config, sessions: Arc::new(SessionStore::new()) });
 
     // Public routes (no auth required)
-    let public_routes = Router::new().route("/config", get(handlers::get_config));
+    let public_routes = Router::new()
+        .route("/config", get(handlers::get_config))
+        .route("/auth/login", post(handlers::login));
 
-    // Admin routes (require NIP-98 auth)
+    // Admin routes (require bearer session token)
     let admin_routes = Router::new()
         .route("/forms", post(handlers::create_form))
         .route("/forms", get(handlers::list_forms))
@@ -48,6 +52,7 @@ pub async fn run(bind_addr: String, db: Database, config: Config) -> anyhow::Res
         )
         .route("/admin/pubkeys", post(handlers::add_admin))
         .route("/admin/pubkeys", get(handlers::list_admins))
+        .route("/admin/pubkeys/:pubkey", delete(handlers::remove_admin))
         .layer(middleware::from_fn_with_state(state.clone(), require_admin));
 
     let api_routes = Router::new().merge(public_routes).merge(admin_routes);

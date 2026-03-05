@@ -91,6 +91,17 @@ pub async fn list_admins(State(state): State<Arc<AppState>>) -> AppResult<Json<V
     Ok(Json(admins))
 }
 
+pub async fn remove_admin(
+    State(state): State<Arc<AppState>>,
+    Path(pubkey): Path<String>,
+) -> AppResult<Json<serde_json::Value>> {
+    if pubkey.len() != 64 || !pubkey.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err(anyhow::anyhow!("Invalid pubkey format").into());
+    }
+    state.db.remove_admin(&pubkey)?;
+    Ok(Json(serde_json::json!({ "success": true, "pubkey": pubkey })))
+}
+
 // ==================== Form Handlers ====================
 
 #[derive(Serialize)]
@@ -359,4 +370,47 @@ NostrForms.init({{
 }});
 </script>"#
     )
+}
+
+
+// ==================== Auth / Login ====================
+
+#[derive(Deserialize)]
+pub struct LoginRequest {
+    pub pubkey: String,
+}
+
+#[derive(Serialize)]
+pub struct LoginResponse {
+    pub token: String,
+    pub expires_in: u64,
+}
+
+/// POST /api/auth/login
+///
+/// Accepts `{ pubkey }` (64-char hex). Checks the admin table and issues a
+/// session token. No signature required — the endpoint is only reachable via
+/// SSH tunnel on localhost.
+pub async fn login(
+    State(state): State<Arc<AppState>>,
+    Json(req): Json<LoginRequest>,
+) -> Result<Json<LoginResponse>, (StatusCode, &'static str)> {
+    if req.pubkey.len() != 64 || !req.pubkey.chars().all(|c| c.is_ascii_hexdigit()) {
+        return Err((StatusCode::UNAUTHORIZED, "Invalid pubkey format"));
+    }
+
+    let is_admin = state
+        .db
+        .is_admin(&req.pubkey)
+        .map_err(|_| (StatusCode::INTERNAL_SERVER_ERROR, "Database error"))?;
+    if !is_admin {
+        return Err((StatusCode::FORBIDDEN, "Not an admin"));
+    }
+
+    let token = state.sessions.create(&req.pubkey);
+
+    Ok(Json(LoginResponse {
+        token,
+        expires_in: 8 * 60 * 60,
+    }))
 }

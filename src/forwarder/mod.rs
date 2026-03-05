@@ -1,3 +1,3 @@
-pub mod dm;
+mod dm;
 
-pub use dm::send_dm;
+pub use dm::{send_dm, WsSink};

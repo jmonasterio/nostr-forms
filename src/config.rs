@@ -20,6 +20,10 @@ pub struct Config {
 
     /// Bootstrap admin pubkey (first admin, added if admin_pubkeys table is empty)
     pub bootstrap_admin_pubkey: Option<String>,
+
+    /// Static bearer token for admin API (empty = no auth required)
+    #[serde(default)]
+    pub admin_token: String,
 }
 
 fn default_database_path() -> String {
@@ -41,13 +45,13 @@ impl Config {
             let config: Config = serde_json::from_str(&content)?;
             Ok(config)
         } else {
-            // Return default config if file doesn't exist
             Ok(Config {
                 relay_url: "ws://127.0.0.1:8080".to_string(),
                 database_path: default_database_path(),
                 api_bind_addr: default_api_bind_addr(),
                 default_pow_difficulty: default_pow_difficulty(),
                 bootstrap_admin_pubkey: None,
+                admin_token: String::new(),
             })
         }
     }

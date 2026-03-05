@@ -161,6 +161,12 @@ impl Database {
         Ok(count)
     }
 
+    pub fn remove_admin(&self, pubkey: &str) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute("DELETE FROM admin_pubkeys WHERE pubkey = ?1", params![pubkey])?;
+        Ok(())
+    }
+
     // ==================== Form Operations ====================
 
     pub fn create_form(&self, form: &Form) -> anyhow::Result<()> {
@@ -403,6 +409,36 @@ impl Database {
             |row| row.get(0),
         )?;
         Ok(count > 0)
+    }
+
+    /// Return all submissions in Failed status that have not yet been exhausted.
+    pub fn list_failed_submissions(&self) -> anyhow::Result<Vec<Submission>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT event_id, form_id, sender_pubkey, submission_type, encrypted_content,
+                    decrypted_content, received_at, processed_at, delivery_status,
+                    delivery_attempts, last_delivery_error
+             FROM submissions WHERE delivery_status = 'failed'
+             ORDER BY received_at ASC",
+        )?;
+        let rows = stmt
+            .query_map([], |row| {
+                Ok(Submission {
+                    event_id: row.get(0)?,
+                    form_id: row.get(1)?,
+                    sender_pubkey: row.get(2)?,
+                    submission_type: str_to_submission_type(&row.get::<_, String>(3)?),
+                    encrypted_content: row.get(4)?,
+                    decrypted_content: row.get(5)?,
+                    received_at: row.get(6)?,
+                    processed_at: row.get(7)?,
+                    delivery_status: str_to_delivery_status(&row.get::<_, String>(8)?),
+                    delivery_attempts: row.get(9)?,
+                    last_delivery_error: row.get(10)?,
+                })
+            })?
+            .collect::<rusqlite::Result<Vec<_>>>()?;
+        Ok(rows)
     }
 
     // ==================== Rate Limiting ====================

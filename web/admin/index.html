@@ -87,11 +87,11 @@
       font-weight: 500;
     }
 
-    .badge.active { background: var(--success); color: white; }
-    .badge.paused { background: var(--warning); color: black; }
-    .badge.pending { background: var(--text-muted); color: white; }
+    .badge.active    { background: var(--success); color: white; }
+    .badge.paused    { background: var(--warning); color: black; }
+    .badge.pending   { background: var(--text-muted); color: white; }
     .badge.delivered { background: var(--success); color: white; }
-    .badge.failed { background: var(--error); color: white; }
+    .badge.failed    { background: var(--error); color: white; }
 
     .form-group { margin-bottom: 1rem; }
 
@@ -100,7 +100,6 @@
       font-size: 0.875rem;
       font-weight: 500;
       margin-bottom: 0.5rem;
-      color: var(--text);
     }
 
     input, textarea {
@@ -118,10 +117,7 @@
       border-color: var(--primary);
     }
 
-    textarea {
-      min-height: 100px;
-      font-family: monospace;
-    }
+    textarea { min-height: 100px; font-family: monospace; }
 
     .code-block {
       background: var(--bg);
@@ -138,12 +134,12 @@
     .table { width: 100%; border-collapse: collapse; }
     .table th, .table td { padding: 0.75rem; text-align: left; border-bottom: 1px solid var(--border); }
     .table th { font-weight: 600; color: var(--text-muted); font-size: 0.75rem; text-transform: uppercase; }
-    .table tr:hover { background: rgba(255, 255, 255, 0.02); }
+    .table tr:hover { background: rgba(255,255,255,0.02); }
 
     .modal-backdrop {
       position: fixed;
       top: 0; left: 0; right: 0; bottom: 0;
-      background: rgba(0, 0, 0, 0.7);
+      background: rgba(0,0,0,0.7);
       display: none;
       align-items: center;
       justify-content: center;
@@ -176,8 +172,8 @@
     }
 
     .text-muted { color: var(--text-muted); }
-    .text-mono { font-family: monospace; font-size: 0.875rem; }
-    .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
+    .text-mono  { font-family: monospace; font-size: 0.875rem; }
+    .truncate   { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 200px; }
 
     .tabs {
       display: flex;
@@ -198,49 +194,219 @@
     .tab.active { color: var(--primary); border-bottom-color: var(--primary); }
 
     .empty-state { text-align: center; padding: 3rem; color: var(--text-muted); }
-    .loading { text-align: center; padding: 2rem; color: var(--text-muted); }
+    .loading     { text-align: center; padding: 2rem; color: var(--text-muted); }
 
+    /* ── Login screen ── */
     #login-screen {
       display: flex;
-      flex-direction: column;
       align-items: center;
       justify-content: center;
       min-height: 80vh;
-      text-align: center;
     }
 
-    #login-screen h1 { margin-bottom: 1rem; }
-    #login-screen p { color: var(--text-muted); margin-bottom: 2rem; }
-    #login-error { color: var(--error); margin-top: 1rem; }
+    .login-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 2rem;
+      width: 100%;
+      max-width: 420px;
+    }
 
-    .user-info {
+    .login-card h1 { text-align: center; margin: 0 0 0.375rem; font-size: 1.25rem; }
+    .login-subtitle { color: var(--text-muted); font-size: 0.875rem; text-align: center; margin-bottom: 1.5rem; }
+
+    .status-banner {
+      display: none;
+      align-items: center;
+      gap: 0.625rem;
+      padding: 0.75rem 1rem;
+      border-radius: 6px;
+      font-size: 0.875rem;
+      margin-bottom: 1rem;
+    }
+    .status-banner.show         { display: flex; }
+    .status-banner.is-checking  { background: rgba(88,166,255,0.1); color: var(--primary); }
+    .status-banner.is-error     { background: rgba(248,81,73,0.1);  color: var(--error); }
+
+    .spinner {
+      width: 14px; height: 14px; flex-shrink: 0;
+      border: 2px solid currentColor;
+      border-top-color: transparent;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .login-options { display: flex; flex-direction: column; gap: 0.75rem; }
+
+    .login-opt {
       display: flex;
       align-items: center;
-      gap: 1rem;
+      gap: 0.75rem;
+      padding: 1rem;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      color: var(--text);
+      font-size: 0.9375rem;
+      cursor: pointer;
+      text-align: left;
+      transition: border-color 0.15s;
     }
-    .user-pubkey {
-      font-family: monospace;
+    .login-opt:hover:not(:disabled) { border-color: var(--primary); }
+    .login-opt:disabled { opacity: 0.45; cursor: not-allowed; }
+    .login-opt .opt-label { flex: 1; }
+    .login-opt .opt-sub {
+      display: block;
       font-size: 0.75rem;
       color: var(--text-muted);
+      margin-top: 2px;
     }
+    .login-opt:hover:not(:disabled) .opt-sub { color: rgba(201,209,217,0.7); }
+
+    .qr-section { text-align: center; }
+    .qr-section h2 { font-size: 1.0625rem; margin-bottom: 0.375rem; }
+    .qr-section > p { color: var(--text-muted); font-size: 0.8125rem; margin-bottom: 1.25rem; }
+
+    .qr-wrapper {
+      background: white;
+      display: inline-block;
+      padding: 12px;
+      border-radius: 8px;
+      margin-bottom: 1rem;
+    }
+    .qr-wrapper img { display: block; width: 192px; height: 192px; }
+
+    .qr-uri {
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 0.625rem 0.875rem;
+      font-family: monospace;
+      font-size: 0.6875rem;
+      word-break: break-all;
+      color: var(--text-muted);
+      max-height: 72px;
+      overflow-y: auto;
+      cursor: pointer;
+      margin-bottom: 0.375rem;
+      text-align: left;
+      transition: border-color 0.15s;
+    }
+    .qr-uri:hover { border-color: var(--primary); }
+    .qr-hint { font-size: 0.75rem; color: var(--text-muted); margin-bottom: 1rem; }
+
+    .countdown-row {
+      display: flex; align-items: center; justify-content: center;
+      gap: 0.5rem; font-size: 0.8125rem; color: var(--text-muted); margin-bottom: 0.5rem;
+    }
+    .countdown-bar { width: 100%; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; margin-bottom: 1.25rem; }
+    .countdown-fill { height: 100%; background: var(--primary); transition: width 1s linear; }
+
+    .bunker-section h2 { font-size: 1.0625rem; margin-bottom: 0.375rem; }
+    .bunker-section > p { color: var(--text-muted); font-size: 0.8125rem; margin-bottom: 1rem; }
+    .btn-row { display: flex; gap: 0.5rem; margin-top: 0.75rem; }
+    .btn-row button { flex: 1; }
+
+    .cancel-btn {
+      background: transparent;
+      border: 1px solid var(--border);
+      color: var(--text-muted);
+      border-radius: 6px;
+      padding: 0.5rem 1rem;
+      cursor: pointer;
+      font-size: 0.875rem;
+    }
+    .cancel-btn:hover { border-color: var(--error); color: var(--error); }
+
+    .hidden { display: none !important; }
+
+    /* ── App header ── */
+    .user-info { display: flex; align-items: center; gap: 1rem; }
+    .user-pubkey { font-family: monospace; font-size: 0.75rem; color: var(--text-muted); }
   </style>
 </head>
 <body>
   <div class="container">
+
     <!-- Login Screen -->
     <div id="login-screen">
-      <h1>nostr-form-rs Admin</h1>
-      <p>Sign in with your Nostr identity to manage forms.</p>
-      <button id="login-btn" onclick="login()">Sign in with Nostr</button>
-      <div id="login-error"></div>
+      <div class="login-card">
+        <h1>nostr-form-rs Admin</h1>
+        <p class="login-subtitle">Sign in with your Nostr identity</p>
+
+        <div id="login-status" class="status-banner">
+          <div class="spinner" id="login-spinner"></div>
+          <span id="login-status-text"></span>
+        </div>
+
+        <!-- Option list -->
+        <div id="login-options" class="login-options">
+          <button id="btn-extension" class="login-opt" onclick="connectExtension()">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            <span class="opt-label">
+              Browser Extension
+              <small class="opt-sub" id="ext-sub">Alby, nos2x, Amber</small>
+            </span>
+            <span>&rsaquo;</span>
+          </button>
+
+          <button class="login-opt" onclick="startQR()">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="3" height="3"/><rect x="18" y="14" width="3" height="3"/><rect x="14" y="18" width="3" height="3"/><rect x="18" y="18" width="3" height="3"/></svg>
+            <span class="opt-label">
+              Scan QR Code
+              <small class="opt-sub">NIP-46 remote signer</small>
+            </span>
+            <span>&rsaquo;</span>
+          </button>
+
+          <button class="login-opt" onclick="showBunker()">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/></svg>
+            <span class="opt-label">
+              Paste Bunker URL
+              <small class="opt-sub">bunker:// from your signer</small>
+            </span>
+            <span>&rsaquo;</span>
+          </button>
+        </div>
+
+        <!-- QR flow -->
+        <div id="qr-section" class="qr-section hidden">
+          <h2>Scan with your Nostr app</h2>
+          <p>Open your signer and scan this code</p>
+          <div class="qr-wrapper"><img id="qr-image" src="" alt="NIP-46 QR code"></div>
+          <div class="qr-uri" id="qr-uri" onclick="copyUri()" title="Click to copy"></div>
+          <div class="qr-hint" id="qr-hint">Click URI above to copy</div>
+          <div class="countdown-row">
+            <span>Waiting...</span>
+            <span id="countdown-time"></span>
+          </div>
+          <div class="countdown-bar">
+            <div class="countdown-fill" id="countdown-fill" style="width:100%"></div>
+          </div>
+          <button class="cancel-btn" onclick="cancelQR()">Cancel</button>
+        </div>
+
+        <!-- Bunker flow -->
+        <div id="bunker-section" class="bunker-section hidden">
+          <h2>Bunker URL</h2>
+          <p>Paste the bunker:// URL from your signer app</p>
+          <input type="text" id="bunker-input" placeholder="bunker://...">
+          <div class="btn-row">
+            <button onclick="connectBunker()">Connect</button>
+            <button class="cancel-btn" onclick="cancelBunker()">Cancel</button>
+          </div>
+        </div>
+      </div>
     </div>
 
-    <!-- Main App (hidden until logged in) -->
-    <div id="app" style="display: none;">
+    <!-- Main App -->
+    <div id="app" style="display:none">
       <header>
         <h1>nostr-form-rs</h1>
         <div class="user-info">
-          <span class="user-pubkey" id="user-pubkey"></span>
+          <span class="user-pubkey" id="active-pubkey"></span>
           <button class="secondary" onclick="logout()">Sign out</button>
           <button id="new-form-btn">+ New Form</button>
         </div>
@@ -254,8 +420,7 @@
       <div id="forms-tab">
         <div id="forms-list" class="loading">Loading...</div>
       </div>
-
-      <div id="submissions-tab" style="display: none;">
+      <div id="submissions-tab" style="display:none">
         <div id="submissions-list" class="loading">Loading...</div>
       </div>
     </div>
@@ -276,7 +441,7 @@
         <div class="form-group">
           <label for="notify-pubkey">Notify Pubkey (receives submissions as DM)</label>
           <input type="text" id="notify-pubkey" name="notify_pubkey" required placeholder="64-char hex pubkey" pattern="[a-fA-F0-9]{64}">
-          <button type="button" class="secondary" style="margin-top: 0.5rem;" onclick="useMyPubkey()">Use my pubkey</button>
+          <button type="button" class="secondary" style="margin-top:0.5rem" onclick="useMyPubkey()">Use my pubkey</button>
         </div>
         <div class="form-group">
           <label for="pow-difficulty">PoW Difficulty</label>
@@ -292,7 +457,7 @@
 
   <!-- Form Detail Modal -->
   <div class="modal-backdrop" id="form-detail-modal">
-    <div class="modal" style="max-width: 700px;">
+    <div class="modal" style="max-width:700px">
       <div class="modal-header">
         <h2 id="detail-form-name">Form Details</h2>
         <button class="secondary" onclick="closeModal('form-detail-modal')">&times;</button>
@@ -301,224 +466,318 @@
     </div>
   </div>
 
-  <script>
+  <script type="module">
+    import {
+      NostrAuth,
+      NostrLoginFlow,
+      LoginState,
+    } from '/admin/nostr-universal.js';
+
+    // ── Nostr auth ──────────────────────────────────────────────────────────
+
+    const auth = new NostrAuth({
+      relays: ['wss://relay.nsec.app', 'wss://relay.damus.io', 'wss://nos.lol'],
+    });
+
+    const NIP46_TIMEOUT = 120_000;
+
+    const loginFlow = new NostrLoginFlow(auth, {
+      appName: 'nostr-form-rs Admin',
+      appUrl: window.location.origin,
+      nip46Timeout: NIP46_TIMEOUT,
+
+      onStateChange: (state, flow) => updateLoginUI(state, flow),
+      onCountdown:   (secs)        => updateCountdown(secs),
+      onConnected:   (pubkey)      => doLogin(pubkey),
+      onError:       (err)         => showLoginError(err.message),
+    });
+
+    // ── Session token ────────────────────────────────────────────────────────
+
     const API_BASE = '/api';
-    let userPubkey = null;
+    let sessionToken = null;
 
-    // ==================== Auth ====================
-    // Bech32 npub -> hex (NIP-07 should return hex but some Alby versions return npub)
-    function npubToHex(npub) {
-      const CHARSET = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
-      const data = npub.slice(npub.indexOf('1') + 1);
-      let acc = 0, bits = 0, result = [];
-      for (let i = 0; i < data.length - 6; i++) {
-        acc = (acc << 5) | CHARSET.indexOf(data[i]);
-        bits += 5;
-        while (bits >= 8) { bits -= 8; result.push((acc >> bits) & 0xff); }
-      }
-      return result.map(b => b.toString(16).padStart(2, '0')).join('');
-    }
-
-    // Signed token cache — keyed by method, valid 50s
-    let authCache = {};
-
-    // Sign a NIP-98 token directly within a user gesture.
-    // Must be called with no awaits before it in the gesture chain.
-    async function signAuthToken(method, url) {
-      const now = Math.floor(Date.now() / 1000);
-      const signed = await window.nostr.signEvent({
-        kind: 27235,
-        created_at: now,
-        tags: [['u', url], ['method', method]],
-        content: ''
-      });
-      const header = 'Nostr ' + btoa(JSON.stringify(signed));
-      authCache[method] = { header, expiresAt: now + 50 };
-      return header;
-    }
-
-    async function getAuthHeader(method, url) {
-      const now = Math.floor(Date.now() / 1000);
-      const cached = authCache[method];
-      if (cached && cached.expiresAt > now) return cached.header;
-      // Cache miss — must sign. This is only safe inside a user gesture.
-      return signAuthToken(method, url);
-    }
-
-    // Login: called directly from onclick — we are inside a user gesture.
-    // Keep the chain as short as possible before signEvent.
-    async function login() {
-      const errorEl = document.getElementById('login-error');
-      errorEl.textContent = '';
-      if (!window.nostr) {
-        errorEl.textContent = 'No Nostr extension found. Install Alby, nos2x, or similar.';
-        return;
-      }
-
+    /**
+     * Sign a single NIP-98 kind-27235 event against the login endpoint,
+     * POST it, and store the returned session token.
+     */
+    async function doLogin(pubkey) {
+      showLoginBanner('checking', 'Verifying with server…');
       try {
-        // Step 1: get pubkey (Alby auto-approves this, no popup needed)
-        const raw = await window.nostr.getPublicKey();
-        userPubkey = raw.startsWith('npub') ? npubToHex(raw) : raw;
-
-        // Step 2: sign auth token — still within user gesture, triggers Alby popup
-        const url = window.location.origin + API_BASE + '/forms';
-        const header = await signAuthToken('GET', url);
-
-        // Step 3: fetch with the token we just signed (no re-sign needed)
-        const response = await fetch(API_BASE + '/forms', {
-          headers: { 'Authorization': header, 'Content-Type': 'application/json' }
+        // Alby returns the npub bech32 string; decode it to 32-byte hex.
+        // Self-contained so we don't depend on nostr-universal internals.
+        function npubToHex(key) {
+          if (!key.startsWith('npub1')) return key; // already hex
+          const CHARS = 'qpzry9x8gf2tvdw0s3jn54khce6mua7l';
+          const data = key.slice(5); // strip 'npub1'
+          let bits = 0, val = 0;
+          const bytes = [];
+          for (const c of data) {
+            const d = CHARS.indexOf(c);
+            if (d < 0) break; // stop at checksum padding
+            val = (val << 5) | d;
+            bits += 5;
+            if (bits >= 8) { bits -= 8; bytes.push((val >> bits) & 0xff); }
+          }
+          return Array.from(bytes.slice(0, 32), b => b.toString(16).padStart(2, '0')).join('');
+        }
+        const pubkeyHex = npubToHex(pubkey);
+        const res = await fetch(API_BASE + '/auth/login', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ pubkey: pubkeyHex }),
         });
-        if (!response.ok) throw new Error(`${response.status}: ${await response.text()}`);
-        document.getElementById('user-pubkey').textContent = userPubkey.substring(0, 16) + '...';
-        document.getElementById('login-screen').style.display = 'none';
-        document.getElementById('app').style.display = 'block';
-        loadForms();
+
+        if (!res.ok) {
+          const msg = await res.text();
+          throw new Error(res.status === 403 ? 'Not an admin' : msg);
+        }
+
+        const { token } = await res.json();
+        sessionToken = token;
+        enterApp(pubkeyHex);
       } catch (err) {
-        console.error('Login failed:', err);
-        errorEl.textContent = 'Login failed: ' + err.message;
-        userPubkey = null;
-        authCache = {};
+        // Return to login options with the error shown
+        showLoginError(err.message);
+        loginFlow.reset();
       }
-    }
-    function logout() {
-      userPubkey = null;
-      authCache = {};
-      document.getElementById('login-screen').style.display = 'flex';
-      document.getElementById('app').style.display = 'none';
     }
 
     async function apiFetch(path, options = {}) {
-      const method = (options.method || 'GET').toUpperCase();
-      const url = window.location.origin + API_BASE + path;
-      const authHeader = await getAuthHeader(method, url);
-      // Invalidate cache after a write so next call re-signs with fresh timestamp
-      if (method !== 'GET') delete authCache[method];
-      const response = await fetch(API_BASE + path, {
+      const res = await fetch(API_BASE + path, {
         ...options,
-        headers: { ...options.headers, 'Authorization': authHeader, 'Content-Type': 'application/json' }
+        headers: {
+          ...options.headers,
+          'Authorization': 'Bearer ' + sessionToken,
+          'Content-Type': 'application/json',
+        },
       });
-      if (!response.ok) {
-        const text = await response.text();
-        throw new Error(`${response.status}: ${text}`);
+      if (!res.ok) {
+        const text = await res.text();
+        throw new Error(`${res.status}: ${text}`);
       }
-      return response.json();
+      return res.json();
     }
 
-    // ==================== UI ====================
+    // ── Login UI ─────────────────────────────────────────────────────────────
+
+    const $ = id => document.getElementById(id);
+
+    function showLoginBanner(type, text) {
+      const el = $('login-status');
+      el.className = 'status-banner show is-' + type;
+      $('login-spinner').style.display = type === 'checking' ? '' : 'none';
+      $('login-status-text').textContent = text;
+    }
+
+    function hideLoginBanner() {
+      $('login-status').className = 'status-banner';
+    }
+
+    function showLoginError(msg) {
+      showLoginBanner('error', msg);
+    }
+
+    function showSection(id) {
+      ['login-options', 'qr-section', 'bunker-section'].forEach(s => {
+        $(s).classList.toggle('hidden', s !== id);
+      });
+    }
+
+    function updateLoginUI(state, flow) {
+      hideLoginBanner();
+
+      switch (state) {
+        case LoginState.CHECKING:
+          showSection(null);
+          showLoginBanner('checking', 'Checking for signer...');
+          break;
+
+        case LoginState.WAITING_EXTENSION:
+          showSection(null);
+          showLoginBanner('checking', 'Waiting for extension approval...');
+          break;
+
+        case LoginState.IDLE:
+          showSection('login-options');
+          updateExtensionButton();
+          break;
+
+        case LoginState.ERROR:
+          showSection('login-options');
+          updateExtensionButton();
+          if (flow.error) showLoginError(flow.error);
+          break;
+
+        case LoginState.SHOWING_QR:
+        case LoginState.WAITING_NIP46:
+          showSection('qr-section');
+          if (flow.qrDataUrl) $('qr-image').src = flow.qrDataUrl;
+          $('qr-uri').textContent = flow.qrUri || '';
+          break;
+
+        case LoginState.CONNECTED:
+          // onConnected fires; doLogin() takes over
+          break;
+      }
+    }
+
+    function updateExtensionButton() {
+      const btn = $('btn-extension');
+      const sub = $('ext-sub');
+      if (!loginFlow.hasExtension()) {
+        btn.disabled = true;
+        sub.textContent = 'No extension detected';
+      } else {
+        btn.disabled = false;
+        sub.textContent = 'Alby, nos2x, Amber';
+      }
+    }
+
+    function updateCountdown(secs) {
+      const m = Math.floor(secs / 60);
+      const s = secs % 60;
+      $('countdown-time').textContent = `${m}:${s.toString().padStart(2, '0')}`;
+      $('countdown-fill').style.width = ((secs / (NIP46_TIMEOUT / 1000)) * 100) + '%';
+    }
+
+    // ── App entry / exit ─────────────────────────────────────────────────────
+
+    function enterApp(pubkey) {
+      $('login-screen').style.display = 'none';
+      $('app').style.display = 'block';
+      const short = pubkey.slice(0, 8) + '...' + pubkey.slice(-6);
+      $('active-pubkey').textContent = short;
+      $('active-pubkey').title = pubkey;
+      loadForms();
+    }
+
+    window.logout = () => {
+      sessionToken = null;
+      auth.logoutAll();
+      loginFlow.reset();
+      $('login-screen').style.display = '';
+      $('app').style.display = 'none';
+      $('active-pubkey').textContent = '';
+    };
+
+    // ── Login flow handlers (called from HTML onclick) ────────────────────────
+
+    window.connectExtension = () => loginFlow.connectExtension();
+    window.startQR          = () => loginFlow.startNip46();
+    window.cancelQR         = () => loginFlow.cancelNip46();
+
+    window.showBunker = () => {
+      showSection('bunker-section');
+      $('bunker-input').focus();
+    };
+    window.cancelBunker = () => {
+      showSection('login-options');
+      $('bunker-input').value = '';
+    };
+    window.connectBunker = async () => {
+      const uri = $('bunker-input').value.trim();
+      if (!uri) { showLoginError('Enter a bunker:// URL'); return; }
+      showSection(null);
+      await loginFlow.connectBunker(uri);
+    };
+
+    window.copyUri = async () => {
+      const uri = $('qr-uri').textContent;
+      try { await navigator.clipboard.writeText(uri); }
+      catch { /* fallback */ const ta = Object.assign(document.createElement('textarea'), { value: uri }); document.body.appendChild(ta); ta.select(); document.execCommand('copy'); document.body.removeChild(ta); }
+      const hint = $('qr-hint');
+      hint.textContent = 'Copied!';
+      setTimeout(() => { hint.textContent = 'Click URI above to copy'; }, 2000);
+    };
+
+    // ── UI helpers ────────────────────────────────────────────────────────────
 
     document.querySelectorAll('.tab').forEach(tab => {
       tab.addEventListener('click', () => {
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         tab.classList.add('active');
-
-        const tabName = tab.dataset.tab;
-        document.getElementById('forms-tab').style.display = tabName === 'forms' ? 'block' : 'none';
-        document.getElementById('submissions-tab').style.display = tabName === 'submissions' ? 'block' : 'none';
-
-        if (tabName === 'submissions') {
-          loadRecentSubmissions();
-        }
+        const name = tab.dataset.tab;
+        $('forms-tab').style.display        = name === 'forms'       ? 'block' : 'none';
+        $('submissions-tab').style.display  = name === 'submissions' ? 'block' : 'none';
+        if (name === 'submissions') loadRecentSubmissions();
       });
     });
 
-    function openModal(id) {
-      document.getElementById(id).classList.add('active');
+    window.openModal  = id => $(id).classList.add('active');
+    window.closeModal = id => $(id).classList.remove('active');
+    $('new-form-btn').addEventListener('click', () => openModal('new-form-modal'));
+
+    window.useMyPubkey = () => {
+      const pk = auth.getActivePubkey();
+      if (pk) $('notify-pubkey').value = pk;
+    };
+
+    function escapeHtml(str) {
+      const d = document.createElement('div');
+      d.textContent = str;
+      return d.innerHTML;
     }
 
-    function closeModal(id) {
-      document.getElementById(id).classList.remove('active');
-    }
-
-    document.getElementById('new-form-btn').addEventListener('click', () => {
-      openModal('new-form-modal');
-    });
-
-    function useMyPubkey() {
-      if (userPubkey) {
-        document.getElementById('notify-pubkey').value = userPubkey;
-      }
-    }
-
-    // ==================== Forms ====================
+    // ── Forms ─────────────────────────────────────────────────────────────────
 
     async function loadForms() {
       try {
         const forms = await apiFetch('/forms');
-        const container = document.getElementById('forms-list');
-
-        if (forms.length === 0) {
+        const container = $('forms-list');
+        if (!forms.length) {
           container.innerHTML = '<div class="empty-state"><p>No forms yet. Create your first form to get started.</p></div>';
           return;
         }
-
-        container.innerHTML = forms.map(form => `
+        container.innerHTML = forms.map(f => `
           <div class="card">
             <div class="card-header">
-              <span class="card-title">${escapeHtml(form.name)}</span>
-              <span class="badge ${form.status}">${form.status}</span>
+              <span class="card-title">${escapeHtml(f.name)}</span>
+              <span class="badge ${f.status}">${f.status}</span>
             </div>
-            <p class="text-muted text-mono truncate">${form.form_id}</p>
-            <button class="secondary" onclick="showFormDetail('${form.form_id}')">View Details</button>
+            <p class="text-muted text-mono truncate">${f.form_id}</p>
+            <button class="secondary" onclick="showFormDetail('${f.form_id}')">View Details</button>
           </div>
         `).join('');
       } catch (err) {
-        document.getElementById('forms-list').innerHTML = `
-          <div class="empty-state"><p>Failed to load forms: ${err.message}</p></div>
-        `;
+        $('forms-list').innerHTML = `<div class="empty-state"><p>Failed to load forms: ${err.message}</p></div>`;
       }
     }
 
-    async function showFormDetail(formId) {
+    window.showFormDetail = async (formId) => {
       try {
         const [form, embed] = await Promise.all([
           apiFetch(`/forms/${formId}`),
-          apiFetch(`/forms/${formId}/embed`)
+          apiFetch(`/forms/${formId}/embed`),
         ]);
-
-        document.getElementById('detail-form-name').textContent = form.name;
-        document.getElementById('form-detail-content').innerHTML = `
-          <div class="form-group">
-            <label>Form ID</label>
-            <div class="code-block">${form.form_id}</div>
-          </div>
-          <div class="form-group">
-            <label>Notify Pubkey</label>
-            <div class="code-block">${form.notify_pubkey}</div>
-          </div>
-          <div class="form-group">
-            <label>PoW Difficulty</label>
-            <div class="code-block">${form.pow_difficulty} bits</div>
-          </div>
-          <div class="form-group">
-            <label>Embed Code</label>
-            <div class="code-block">${escapeHtml(embed.html)}</div>
-          </div>
+        $('detail-form-name').textContent = form.name;
+        $('form-detail-content').innerHTML = `
+          <div class="form-group"><label>Form ID</label><div class="code-block">${form.form_id}</div></div>
+          <div class="form-group"><label>Notify Pubkey</label><div class="code-block">${form.notify_pubkey}</div></div>
+          <div class="form-group"><label>PoW Difficulty</label><div class="code-block">${form.pow_difficulty} bits</div></div>
+          <div class="form-group"><label>Embed Code</label><div class="code-block">${escapeHtml(embed.html)}</div></div>
           <div class="modal-footer">
             <button class="secondary" onclick="loadFormSubmissions('${formId}')">View Submissions</button>
           </div>
         `;
-
         openModal('form-detail-modal');
       } catch (err) {
         alert('Failed to load form: ' + err.message);
       }
-    }
+    };
 
-    document.getElementById('new-form-form').addEventListener('submit', async (e) => {
+    $('new-form-form').addEventListener('submit', async (e) => {
       e.preventDefault();
       const form = e.target;
-      const data = {
-        name: form.name.value,
-        notify_pubkey: form.notify_pubkey.value,
-        pow_difficulty: parseInt(form.pow_difficulty.value) || 16
-      };
-
       try {
         const result = await apiFetch('/forms', {
           method: 'POST',
-          body: JSON.stringify(data)
+          body: JSON.stringify({
+            name: form.name.value,
+            notify_pubkey: form.notify_pubkey.value,
+            pow_difficulty: parseInt(form.pow_difficulty.value) || 16,
+          }),
         });
-
         closeModal('new-form-modal');
         form.reset();
         loadForms();
@@ -528,74 +787,54 @@
       }
     });
 
-    // ==================== Submissions ====================
+    // ── Submissions ───────────────────────────────────────────────────────────
 
     async function loadRecentSubmissions() {
       try {
         const forms = await apiFetch('/forms');
-
-        if (forms.length === 0) {
-          document.getElementById('submissions-list').innerHTML = '<div class="empty-state"><p>No forms configured.</p></div>';
+        if (!forms.length) {
+          $('submissions-list').innerHTML = '<div class="empty-state"><p>No forms configured.</p></div>';
           return;
         }
-
-        // Load submissions from first form
-        const submissions = await apiFetch(`/forms/${forms[0].form_id}/submissions?limit=20`);
-        renderSubmissions(submissions);
+        renderSubmissions(await apiFetch(`/forms/${forms[0].form_id}/submissions?limit=20`));
       } catch (err) {
-        document.getElementById('submissions-list').innerHTML = `
-          <div class="empty-state"><p>Failed to load submissions: ${err.message}</p></div>
-        `;
+        $('submissions-list').innerHTML = `<div class="empty-state"><p>Failed to load submissions: ${err.message}</p></div>`;
       }
     }
 
-    async function loadFormSubmissions(formId) {
+    window.loadFormSubmissions = async (formId) => {
       try {
         const submissions = await apiFetch(`/forms/${formId}/submissions?limit=50`);
-
         closeModal('form-detail-modal');
         document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
         document.querySelector('[data-tab="submissions"]').classList.add('active');
-        document.getElementById('forms-tab').style.display = 'none';
-        document.getElementById('submissions-tab').style.display = 'block';
-
+        $('forms-tab').style.display       = 'none';
+        $('submissions-tab').style.display = 'block';
         renderSubmissions(submissions);
       } catch (err) {
         alert('Failed to load submissions: ' + err.message);
       }
-    }
+    };
 
     function renderSubmissions(submissions) {
-      const container = document.getElementById('submissions-list');
-
-      if (submissions.length === 0) {
+      const container = $('submissions-list');
+      if (!submissions.length) {
         container.innerHTML = '<div class="empty-state"><p>No submissions yet.</p></div>';
         return;
       }
-
       container.innerHTML = `
         <table class="table">
-          <thead>
-            <tr>
-              <th>Time</th>
-              <th>Form</th>
-              <th>Sender</th>
-              <th>Status</th>
-              <th>Actions</th>
-            </tr>
-          </thead>
+          <thead><tr><th>Time</th><th>Form</th><th>Sender</th><th>Status</th><th>Actions</th></tr></thead>
           <tbody>
-            ${submissions.map(sub => `
+            ${submissions.map(s => `
               <tr>
-                <td>${new Date(sub.received_at * 1000).toLocaleString()}</td>
-                <td class="text-mono truncate">${sub.form_id}</td>
-                <td class="text-mono truncate">${sub.sender_pubkey.substring(0, 16)}...</td>
-                <td><span class="badge ${sub.delivery_status}">${sub.delivery_status}</span></td>
-                <td>
-                  ${sub.delivery_status === 'failed' ? 
-                    `<button class="secondary" onclick="retrySubmission('${sub.event_id}')">Retry</button>` : 
-                    ''}
-                </td>
+                <td>${new Date(s.received_at * 1000).toLocaleString()}</td>
+                <td class="text-mono truncate">${s.form_id}</td>
+                <td class="text-mono truncate">${s.sender_pubkey.slice(0, 16)}...</td>
+                <td><span class="badge ${s.delivery_status}">${s.delivery_status}</span></td>
+                <td>${s.delivery_status === 'failed'
+                  ? `<button class="secondary" onclick="retrySubmission('${s.event_id}')">Retry</button>`
+                  : ''}</td>
               </tr>
             `).join('')}
           </tbody>
@@ -603,7 +842,7 @@
       `;
     }
 
-    async function retrySubmission(eventId) {
+    window.retrySubmission = async (eventId) => {
       try {
         await apiFetch(`/submissions/${eventId}/retry`, { method: 'POST' });
         alert('Queued for retry');
@@ -611,40 +850,19 @@
       } catch (err) {
         alert('Retry failed: ' + err.message);
       }
-    }
+    };
 
-    function escapeHtml(str) {
-      const div = document.createElement('div');
-      div.textContent = str;
-      return div.innerHTML;
-    }
-
-    // Alby and other extensions inject window.nostr asynchronously.
-    // Poll for up to 2 seconds before giving up.
-    async function waitForNostr(timeoutMs = 2000) {
-      if (window.nostr) return true;
-      return new Promise(resolve => {
-        const start = Date.now();
-        const interval = setInterval(() => {
-          if (window.nostr) {
-            clearInterval(interval);
-            resolve(true);
-          } else if (Date.now() - start >= timeoutMs) {
-            clearInterval(interval);
-            resolve(false);
-          }
-        }, 50);
-      });
-    }
-
-    // Update button text once extension status is known
-    waitForNostr().then(found => {
-      document.getElementById('login-btn').textContent = found
-        ? 'Sign in with Nostr'
-        : 'Install Nostr Extension';
-    });
-
-
+    // ── Boot ──────────────────────────────────────────────────────────────────
+    // Only restore a saved session. Never auto-trigger the extension popup;
+    // the user must click a button.
+    (async () => {
+      const restored = await auth.restoreSession();
+      if (restored) {
+        await doLogin(restored);
+      } else {
+        loginFlow._setState(LoginState.IDLE);
+      }
+    })();
   </script>
 </body>
 </html>

@@ -108,44 +108,52 @@ async function submitForm(form) {
   
   if (config.onProgress) config.onProgress('encrypting');
   
-  // Determine signing mode
-  let senderPrivkey, senderPubkey;
+  // Determine signing mode.
+  // NIP-07 extensions sign but never expose the private key, so we always
+  // generate an ephemeral keypair for NIP-44 encryption.  The ephemeral
+  // pubkey is included in the event so the processor can derive the shared
+  // secret via ECDH(ephemeral_privkey, processor_pubkey).
+  let senderPrivkey = nt.generateSecretKey();
+  let senderPubkey  = nt.getPublicKey(senderPrivkey);
   let submissionType = 'anon';
   let signEvent;
-  
+
   if (allowAuth && window.nostr) {
     try {
-      // Use NIP-07 extension
-      senderPubkey = await window.nostr.getPublicKey();
+      // Use the NIP-07 extension pubkey as the visible sender identity.
+      // Signing is done by the extension; encryption uses the ephemeral key.
+      const nip07Pubkey = await window.nostr.getPublicKey();
+      senderPubkey   = nip07Pubkey;
       submissionType = 'authenticated';
       signEvent = async (event) => window.nostr.signEvent(event);
     } catch (e) {
       console.warn('NIP-07 signing failed, falling back to ephemeral key:', e);
     }
   }
-  
+
   if (!signEvent) {
-    // Generate ephemeral keypair
-    senderPrivkey = nt.generateSecretKey();
-    senderPubkey = nt.getPublicKey(senderPrivkey);
     signEvent = async (event) => nt.finalizeEvent(event, senderPrivkey);
   }
-  
-  // Encrypt payload to processor
+
+  // Encrypt payload using the ephemeral private key.
+  // The processor decrypts with ECDH(ephemeral_pubkey, processor_privkey).
   const payloadJson = JSON.stringify(payload);
-  const conversationKey = nt.nip44.getConversationKey(senderPrivkey || await getEphemeralKey(), processorPubkey);
+  const conversationKey = nt.nip44.getConversationKey(senderPrivkey, processorPubkey);
   const encryptedContent = nt.nip44.encrypt(payloadJson, conversationKey);
-  
+
   // Build event
   let event = {
-    kind: 4, // Encrypted DM
+    kind: 4,
     pubkey: senderPubkey,
     created_at: Math.floor(Date.now() / 1000),
     tags: [
       ['p', processorPubkey],
       ['form_id', formId],
       ['nonce', '0', formPow.toString()],
-      ['submission_type', submissionType]
+      ['submission_type', submissionType],
+      // Include ephemeral pubkey so processor can decrypt even when sender
+      // is a NIP-07 identity (whose private key the processor doesn't have).
+      ['ephemeral', nt.getPublicKey(senderPrivkey)]
     ],
     content: encryptedContent
   };
@@ -237,15 +245,6 @@ async function sha256Hex(data) {
   const hashBuffer = await crypto.subtle.digest('SHA-256', dataBuffer);
   const hashArray = Array.from(new Uint8Array(hashBuffer));
   return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
-}
-
-/**
- * Get ephemeral private key for NIP-44 when using NIP-07
- * (NIP-07 doesn't expose private key, so we generate one just for encryption)
- */
-async function getEphemeralKey() {
-  const nt = await loadNostrTools();
-  return nt.generateSecretKey();
 }
 
 /**
