@@ -84,15 +84,15 @@ async fn main() -> anyhow::Result<()> {
     // Start processor worker
     let processor_handle = {
         let relay_url = config.relay_url.clone();
+        let dm_relays = config.dm_relays.clone();
         let db = db.clone();
         let privkey = processor_privkey;
         tokio::spawn(async move {
-            if let Err(e) = processor::worker::run(relay_url, db, privkey).await {
+            if let Err(e) = processor::worker::run(relay_url, db, privkey, dm_relays).await {
                 tracing::error!("Processor error: {}", e);
             }
         })
     };
-
     // Start HTTP API server
     let api_handle = {
         let bind_addr = config.api_bind_addr.clone();

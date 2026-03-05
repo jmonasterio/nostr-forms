@@ -23,6 +23,7 @@ pub async fn run(
     relay_url: String,
     db: Database,
     processor_privkey: SecretKey,
+    dm_relays: Vec<String>,
 ) -> anyhow::Result<()> {
     let processor_pubkey = {
         let secp = secp256k1::Secp256k1::new();
@@ -34,7 +35,7 @@ pub async fn run(
     info!("Starting processor worker, connecting to {}", relay_url);
 
     loop {
-        match run_connection(&relay_url, &db, &processor_privkey, &processor_pubkey).await {
+        match run_connection(&relay_url, &db, &processor_privkey, &processor_pubkey, &dm_relays).await {
             Ok(_) => info!("Connection closed cleanly"),
             Err(e) => error!("Connection error: {}", e),
         }
@@ -48,6 +49,7 @@ async fn run_connection(
     db: &Database,
     processor_privkey: &SecretKey,
     processor_pubkey: &str,
+    dm_relays: &[String],
 ) -> anyhow::Result<()> {
     let (ws_stream, _) = connect_async(relay_url).await?;
     let (write, mut read) = ws_stream.split();
@@ -70,13 +72,13 @@ async fn run_connection(
     info!("Subscribed to events tagged with processor pubkey");
 
     // Retry any previously-failed submissions using this connection.
-    retry_failed(db, processor_privkey, &sink).await;
+    retry_failed(db, processor_privkey, &sink, dm_relays).await;
 
     while let Some(msg) = read.next().await {
         let msg = msg?;
         if let Message::Text(text) = msg {
             if let Err(e) =
-                handle_message(&text, db, processor_privkey, &sink).await
+                handle_message(&text, db, processor_privkey, &sink, dm_relays).await
             {
                 warn!("Error handling message: {}", e);
             }
@@ -88,7 +90,7 @@ async fn run_connection(
 
 /// On each fresh connection, retry every Failed submission that has not yet
 /// been exhausted.
-async fn retry_failed(db: &Database, processor_privkey: &SecretKey, sink: &Arc<WsSink>) {
+async fn retry_failed(db: &Database, processor_privkey: &SecretKey, sink: &Arc<WsSink>, dm_relays: &[String]) {
     let failed = match db.list_failed_submissions() {
         Ok(v) => v,
         Err(e) => {
@@ -104,7 +106,7 @@ async fn retry_failed(db: &Database, processor_privkey: &SecretKey, sink: &Arc<W
     info!("Retrying {} failed submission(s)", failed.len());
 
     for sub in failed {
-        if let Err(e) = retry_submission(&sub, db, processor_privkey, sink).await {
+        if let Err(e) = retry_submission(&sub, db, processor_privkey, sink, dm_relays).await {
             warn!("Retry failed for {}: {}", sub.event_id, e);
         }
     }
@@ -115,6 +117,7 @@ async fn retry_submission(
     db: &Database,
     processor_privkey: &SecretKey,
     sink: &Arc<WsSink>,
+    dm_relays: &[String],
 ) -> anyhow::Result<()> {
     // Exhaustion check
     if sub.delivery_attempts >= MAX_ATTEMPTS {
@@ -148,7 +151,7 @@ async fn retry_submission(
     let payload: crate::registry::models::SubmissionPayload =
         serde_json::from_str(&decrypted_json)?;
 
-    dispatch_dm(db, processor_privkey, sink, &sub.event_id, &form, &payload, &sub.sender_pubkey, form.pow_difficulty)
+    dispatch_dm(db, processor_privkey, sink, &sub.event_id, &form, &payload, &sub.sender_pubkey, form.pow_difficulty, dm_relays)
         .await
 }
 
@@ -157,6 +160,7 @@ async fn handle_message(
     db: &Database,
     processor_privkey: &SecretKey,
     sink: &Arc<WsSink>,
+    dm_relays: &[String],
 ) -> anyhow::Result<()> {
     let msg: serde_json::Value = serde_json::from_str(text)?;
     let msg_type = msg.get(0).and_then(|v| v.as_str()).unwrap_or("");
@@ -164,7 +168,7 @@ async fn handle_message(
     match msg_type {
         "EVENT" => {
             if let Some(event) = msg.get(2) {
-                handle_event(event, db, processor_privkey, sink).await?;
+                handle_event(event, db, processor_privkey, sink, dm_relays).await?;
             }
         }
         "EOSE" => debug!("End of stored events"),
@@ -185,6 +189,7 @@ async fn handle_event(
     db: &Database,
     processor_privkey: &SecretKey,
     sink: &Arc<WsSink>,
+    dm_relays: &[String],
 ) -> anyhow::Result<()> {
     let event_id  = event["id"].as_str().unwrap_or("");
     let pubkey    = event["pubkey"].as_str().unwrap_or("");
@@ -300,7 +305,7 @@ async fn handle_event(
             db.update_submission_decrypted(event_id, &decrypted_json)?;
             info!("Decrypted submission {}: {} fields", event_id, payload.fields.len());
 
-            dispatch_dm(db, processor_privkey, sink, event_id, &form, &payload, pubkey, form.pow_difficulty).await?;
+            dispatch_dm(db, processor_privkey, sink, event_id, &form, &payload, pubkey, form.pow_difficulty, dm_relays).await?;
         }
         Err(e) => {
             warn!("Failed to decrypt submission {}: {}", event_id, e);
@@ -325,6 +330,7 @@ async fn dispatch_dm(
     payload: &crate::registry::models::SubmissionPayload,
     sender_pubkey: &str,
     pow_difficulty: u8,
+    dm_relays: &[String],
 ) -> anyhow::Result<()> {
     match send_dm(
         sink,
@@ -335,6 +341,7 @@ async fn dispatch_dm(
         payload,
         sender_pubkey,
         pow_difficulty,
+        dm_relays,
     )
     .await
     {

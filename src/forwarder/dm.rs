@@ -11,7 +11,7 @@
 //! regular DMs.  The one-time wrap key means the processor pubkey is not
 //! exposed on the wire.
 
-use futures_util::SinkExt;
+use futures_util::{SinkExt, StreamExt};
 use secp256k1::{Secp256k1, SecretKey};
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
@@ -42,6 +42,7 @@ pub async fn send_dm(
     payload: &SubmissionPayload,
     sender_pubkey: &str,
     pow_difficulty: u8,
+    dm_relays: &[String],
 ) -> anyhow::Result<()> {
     // ── Build message text ───────────────────────────────────────────────────
     let mut content = format!("New submission: {}\n\n", form_name);
@@ -134,7 +135,24 @@ pub async fn send_dm(
 
     // ── Publish via shared connection ─────────────────────────────────────────
     let msg = json!(["EVENT", gift_wrap]);
-    sink.lock().await.send(Message::Text(msg.to_string())).await?;
+    let msg_str = msg.to_string();
+    sink.lock().await.send(Message::Text(msg_str.clone())).await?;
+
+    // ── Fan out to additional DM relays concurrently ──────────────────────────
+    // Best-effort: errors are logged but do not fail the overall send.
+    let mut handles = Vec::new();
+    for url in dm_relays {
+        let u = url.clone();
+        let m = msg_str.clone();
+        handles.push(tokio::spawn(async move {
+            if let Err(e) = publish_to_relay(&u, &m).await {
+                tracing::warn!("DM fan-out to {} failed: {}", u, e);
+            }
+        }));
+    }
+    for h in handles {
+        let _ = h.await;
+    }
 
     tracing::info!(
         "NIP-17 DM sent to {}… for form '{}'",
@@ -170,6 +188,31 @@ fn jitter_timestamp(base: i64) -> i64 {
     base + jitter
 }
 
+/// Publish a pre-built EVENT message to a relay via a one-shot connection.
+/// Waits up to 5 s for an OK frame; errors are logged by the caller.
+async fn publish_to_relay(url: &str, msg_json: &str) -> anyhow::Result<()> {
+    use std::time::Duration;
+    use tokio::time::timeout;
+    use tokio_tungstenite::connect_async;
+
+    let (ws, _) = timeout(Duration::from_secs(10), connect_async(url)).await??;
+    let (mut write, mut read) = ws.split();
+    write.send(Message::Text(msg_json.to_string())).await?;
+
+    // Wait up to 5 s for OK/NOTICE before closing.
+    let _ = timeout(Duration::from_secs(5), async {
+        while let Some(Ok(Message::Text(text))) = read.next().await {
+            if let Ok(v) = serde_json::from_str::<serde_json::Value>(&text) {
+                match v.get(0).and_then(|x| x.as_str()) {
+                    Some("OK") | Some("NOTICE") => break,
+                    _ => {}}
+            }
+        }
+    }).await;
+
+    let _ = write.close().await;
+    Ok(())
+}
 /// Mine NIP-13 proof-of-work for an event. Returns (event_id_hex, winning_nonce).
 fn mine_event_pow(
     pub_hex: &str,

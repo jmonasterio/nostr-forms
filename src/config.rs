@@ -24,6 +24,11 @@ pub struct Config {
     /// Static bearer token for admin API (empty = no auth required)
     #[serde(default)]
     pub admin_token: String,
+
+    /// Additional relays to publish gift-wrap DMs to (beyond the processor relay).
+    /// Recipients whose clients don't watch relay.argw.com still receive the DM.
+    #[serde(default)]
+    pub dm_relays: Vec<String>,
 }
 
 fn default_database_path() -> String {
@@ -52,6 +57,7 @@ impl Config {
                 default_pow_difficulty: default_pow_difficulty(),
                 bootstrap_admin_pubkey: None,
                 admin_token: String::new(),
+                dm_relays: Vec::new(),
             })
         }
     }
