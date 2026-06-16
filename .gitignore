@@ -8,14 +8,19 @@ Cargo.lock
 *.swp
 *.swo
 
+# Agent tooling
+.claude/
+
 # Data
 *.db
 *.db-shm
 *.db-wal
 /data/
 
-# Config with secrets
+# Config with secrets / local dev config
 config.json
+local-config.json
+Tempnfr-config.json
 
 # Logs
 *.log
