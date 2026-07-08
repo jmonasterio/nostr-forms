@@ -709,22 +709,31 @@ async function nip44Decrypt(content, privateKey, publicKey) {
 }
 
 /**
+ * NIP-44 padded-length per spec (calc_padded_len). Returns the length of the
+ * plaintext+suffix region, EXCLUDING the 2-byte length prefix.
+ */
+function _nip44CalcPaddedLen(len) {
+  if (len <= 32) return 32;
+  const nextPower = 1 << (Math.floor(Math.log2(len - 1)) + 1);
+  const chunk = nextPower <= 256 ? 32 : nextPower / 8;
+  return chunk * (Math.floor((len - 1) / chunk) + 1);
+}
+
+/**
  * NIP-44 v2 encryption
  */
 async function nip44Encrypt(content, privateKey, publicKey) {
   const plaintext = utf8ToBytes(content);
 
-  // Step 1: Calculate padded length (NIP-44 padding spec)
-  // Minimum 32 bytes, round up to next power of 2
-  const unpadded = 2 + plaintext.length; // 2 bytes for length prefix
-  let paddedLen = 32;
-  while (paddedLen < unpadded) paddedLen *= 2;
-  if (paddedLen > 65535) throw new Error('Message too long for NIP-44');
+  // Step 1: NIP-44 padded length = 2-byte length prefix + calc_padded_len(plaintext)
+  const len = plaintext.length;
+  if (len < 1 || len > 65535) throw new Error('Message too long for NIP-44');
+  const paddedLen = 2 + _nip44CalcPaddedLen(len);
 
   // Step 2: Create padded message: 2-byte BE length + message + zeros
   const padded = new Uint8Array(paddedLen);
-  padded[0] = (plaintext.length >> 8) & 0xff;
-  padded[1] = plaintext.length & 0xff;
+  padded[0] = (len >> 8) & 0xff;
+  padded[1] = len & 0xff;
   padded.set(plaintext, 2);
 
   // Step 3: Generate random nonce (32 bytes)
@@ -801,10 +810,14 @@ async function getEventHash(event) {
 }
 
 async function signEvent(event, privateKey) {
-  const id = await getEventHash(event);
+  // Derive pubkey from the signing key so id/pubkey/sig are always consistent,
+  // even when the caller omits event.pubkey (was: produced a null-pubkey event).
+  const pubkey = bytesToHex(getPublicKey(privateKey));
+  const withPubkey = { ...event, pubkey };
+  const id = await getEventHash(withPubkey);
   const sig = await schnorrSign(hexToBytes(id), privateKey);
   return {
-    ...event,
+    ...withPubkey,
     id,
     sig: bytesToHex(sig)
   };
@@ -911,15 +924,75 @@ async function signNip98(signer, url, method, body, options = {}) {
 // RELAY POOL
 // ============================================================================
 
+/**
+ * Close a relay socket without console noise. Closing a socket that is still
+ * CONNECTING makes the browser log a red "WebSocket is closed before the
+ * connection is established" error. Instead, detach handlers and close cleanly
+ * once it opens (a genuine dial failure still surfaces on its own).
+ * @private
+ */
+function _safeCloseWs(ws) {
+  if (!ws) return;
+  try {
+    if (ws.readyState === WebSocket.CONNECTING) {
+      ws.onerror = null;
+      ws.onmessage = null;
+      ws.onclose = null;
+      ws.onopen = () => { try { ws.close(); } catch (e) {} };
+    } else {
+      ws.close();
+    }
+  } catch (e) {}
+}
+
+/**
+ * RelayPool — manages WebSocket connections to Nostr relays.
+ *
+ * Connection model (NIP-01): a client SHOULD hold a SINGLE WebSocket per relay
+ * and reuse it for all subscriptions/publishes. `connect(url)` returns the
+ * existing live socket when one is present rather than dialing again.
+ *
+ * Failure handling (negative cache / backoff): NIP-46 signing under MNA1 signs
+ * one event PER request, and every publish/subscribe calls `tryConnect`. If a
+ * relay is unreachable, re-dialing it on each request produces a storm of
+ * `WebSocket … failed` errors — each a fresh socket that waits up to
+ * `connectionTimeout`. To honor the "one persistent connection" intent, a relay
+ * whose *dial* fails is recorded in `failedRelays` with a timestamp; subsequent
+ * `connect` calls fast-fail (throw an error tagged `{ cooldown: true }`, so
+ * `tryConnect` returns null) for `retryBackoff` ms instead of opening a new
+ * socket. A successful open clears the entry. A clean close of a
+ * previously-open socket does NOT record a failure — transient drops are free
+ * to reconnect immediately.
+ *
+ * @param {object} [options]
+ * @param {number} [options.connectionTimeout=20000] ms before a pending dial is abandoned
+ * @param {number} [options.pingInterval=30000]      ms between keepalive REQ pings
+ * @param {number} [options.retryBackoff=30000]      ms to skip re-dialing a relay after a failed dial
+ */
 class RelayPool {
   constructor(options = {}) {
     this.relays = new Map(); // url -> { ws, status, queue, pingInterval }
     this.subscriptions = new Map(); // subId -> { filters, relays, callbacks }
     this.connectionTimeout = options.connectionTimeout || 20000; // 20 seconds
     this.pingInterval = options.pingInterval || 30000; // 30 seconds keepalive
+    // ms to skip re-dialing a relay after a failed dial (negative cache).
+    this.retryBackoff = options.retryBackoff || 30000;
+    this.failedRelays = new Map(); // url -> failedAt(ms) of last failed dial
   }
 
   async connect(url) {
+    // Negative cache (NIP-01: one socket per relay, reuse it). Skip a relay
+    // whose dial failed within the last `retryBackoff` ms instead of opening a
+    // brand-new socket on every request — see class doc.
+    const failedAt = this.failedRelays.get(url);
+    if (failedAt !== undefined) {
+      if (Date.now() - failedAt < this.retryBackoff) {
+        const err = new Error(`Relay cooling down: ${url}`);
+        err.cooldown = true;
+        throw err;
+      }
+      this.failedRelays.delete(url);
+    }
     if (this.relays.has(url)) {
       const relay = this.relays.get(url);
       if (relay.status === 'connected') return relay;
@@ -945,32 +1018,51 @@ class RelayPool {
     this.relays.set(url, relay);
 
     return new Promise((resolve, reject) => {
+      let opened = false;
       try {
         relay.ws = new WebSocket(url);
       } catch (err) {
         relay.status = 'failed';
         this.relays.delete(url);
+        this.failedRelays.set(url, Date.now());
         reject(err);
         return;
       }
 
       const timeout = setTimeout(() => {
         relay.status = 'failed';
-        try { relay.ws.close(); } catch (e) {}
+        _safeCloseWs(relay.ws);
         this.relays.delete(url);
+        this.failedRelays.set(url, Date.now());
         reject(new Error(`Connection timeout: ${url}`));
       }, this.connectionTimeout);
 
       relay.ws.onopen = () => {
         clearTimeout(timeout);
         relay.status = 'connected';
+        opened = true;
+        this.failedRelays.delete(url);
+
+        // Replay active subscriptions targeting this relay (NIP-01 REQs die
+        // with the socket; without this a dropped relay silently loses every
+        // standing subscription — e.g. a NIP-46 signer's response listener —
+        // until the caller re-subscribes). Dials stay demand-driven: this only
+        // re-attaches subs when something else re-opened the socket.
+        this.subscriptions.forEach(sub => {
+          if (sub.urls.includes(url)) this._attachSubscription(relay, sub);
+        });
 
         // Start keepalive ping
         relay.pingTimer = setInterval(() => {
           if (relay.ws && relay.ws.readyState === WebSocket.OPEN) {
             try {
-              // Send a REQ with empty filter that returns nothing - acts as ping
-              relay.ws.send(JSON.stringify(['REQ', 'ping_' + Date.now(), { limit: 0 }]));
+              // Keepalive: a limit:0 REQ answers with EOSE only, so the
+              // round-trip traffic itself is the ping. CLOSE it immediately —
+              // otherwise server-side subscriptions accumulate one per
+              // interval and relays with subscription caps drop the socket.
+              const pingId = 'ping_' + Date.now();
+              relay.ws.send(JSON.stringify(['REQ', pingId, { limit: 0 }]));
+              relay.ws.send(JSON.stringify(['CLOSE', pingId]));
             } catch (e) {}
           }
         }, this.pingInterval);
@@ -985,6 +1077,7 @@ class RelayPool {
         if (relay.pingTimer) clearInterval(relay.pingTimer);
         relay.status = 'failed';
         this.relays.delete(url);
+        if (!opened) this.failedRelays.set(url, Date.now());
         reject(new Error(`Connection failed: ${url}`));
         relay.queue.forEach(q => q.reject(err));
         relay.queue = [];
@@ -1014,7 +1107,7 @@ class RelayPool {
     try {
       return await this.connect(url);
     } catch (e) {
-      console.warn(`Relay ${url} failed:`, e.message);
+      if (!e.cooldown) console.debug(`Relay ${url} unavailable:`, e.message);
       return null;
     }
   }
@@ -1054,6 +1147,35 @@ class RelayPool {
       })
     );
     return results;
+  }
+
+  /**
+   * Attach a subscription's message handler to a relay and (re)send its REQ.
+   * Idempotent per socket: a stale handler left over from a previous socket
+   * (or an earlier call for the same socket) is replaced first, so the replay
+   * on reconnect never double-delivers events. Used by `subscribe()` for the
+   * initial attach and by `connect()`'s onopen to replay standing
+   * subscriptions after a socket drop + re-dial.
+   * @private
+   */
+  _attachSubscription(relay, sub) {
+    const url = relay.url;
+    const prev = sub.handlers.get(url);
+    if (prev) relay.messageHandlers.delete(prev);
+    const handler = (data) => {
+      if (data[0] === 'EVENT' && data[1] === sub.id) {
+        sub.callbacks.onEvent?.(data[2], url);
+      } else if (data[0] === 'EOSE' && data[1] === sub.id) {
+        sub.callbacks.onEose?.(url);
+      }
+    };
+    relay.messageHandlers.add(handler);
+    sub.handlers.set(url, handler);
+    try {
+      relay.ws.send(JSON.stringify(['REQ', sub.id, ...sub.filters]));
+    } catch (e) {
+      console.warn(`Failed to send to ${url}:`, e);
+    }
   }
 
   subscribe(urls, filters, callbacks) {
@@ -1099,21 +1221,7 @@ class RelayPool {
       }
 
       sub.connectedCount++;
-      const handler = (data) => {
-        if (data[0] === 'EVENT' && data[1] === subId) {
-          callbacks.onEvent?.(data[2], url);
-        } else if (data[0] === 'EOSE' && data[1] === subId) {
-          callbacks.onEose?.(url);
-        }
-      };
-      relay.messageHandlers.add(handler);
-      sub.handlers.set(url, handler);
-
-      try {
-        relay.ws.send(JSON.stringify(['REQ', subId, ...filters]));
-      } catch (e) {
-        console.warn(`Failed to send to ${url}:`, e);
-      }
+      this._attachSubscription(relay, sub);
     });
 
     return sub;
@@ -1123,10 +1231,11 @@ class RelayPool {
     this.subscriptions.forEach(sub => sub.close());
     this.relays.forEach(relay => {
       if (relay.pingTimer) clearInterval(relay.pingTimer);
-      if (relay.ws) relay.ws.close();
+      _safeCloseWs(relay.ws);
     });
     this.relays.clear();
     this.subscriptions.clear();
+    this.failedRelays.clear();
   }
 }
 
@@ -1351,12 +1460,9 @@ class Nip46Signer extends BaseSigner {
       throw new Error('Saved session is incomplete. Please connect again.');
     }
 
-    // Connect to relays in parallel
-    await Promise.allSettled(
-      this.relays.map(relay => this.pool.connect(relay))
-    );
-
-    // Start listening for responses
+    // Don't block startup on the relay handshake — the pubkey is already known
+    // from the saved session. _startListening() subscribes and connects to the
+    // relays lazily in the background; the signer proves itself on first sign.
     this._startListening();
 
     // Mark as connected optimistically. Web-based signers (nsec.app) run
@@ -1470,7 +1576,11 @@ class Nip46Signer extends BaseSigner {
     if (metadata.name) params.set('name', metadata.name);
     if (metadata.url) params.set('url', metadata.url);
     if (metadata.description) params.set('description', metadata.description);
-    if (metadata.perms) params.set('perms', metadata.perms);
+    // Always request the standard perms so the signer grants sign_event (incl.
+    // kind 27235 = NIP-98 / MNA1 auth) up front. Without this the nostrconnect://
+    // URI carries no perms and the signer establishes a no-signing session, so
+    // every later sign returns "no permission". Callers may override via metadata.perms.
+    params.set('perms', metadata.perms || NIP46_DEFAULT_PERMS);
 
     return `nostrconnect://${localPubkeyHex}?${params.toString()}`;
   }
@@ -1498,7 +1608,10 @@ class Nip46Signer extends BaseSigner {
     try {
       const result = await this._rpc('connect', connectParams, timeout);
 
-      if (result === 'ack' || result === true || result === 'true') {
+      // NIP-46: connect result is "ack" OR the secret we sent — accept (and thereby
+      // validate) an echoed secret, not just "ack".
+      if (result === 'ack' || result === true || result === 'true' ||
+          (this.bunkerSecret && result === this.bunkerSecret)) {
         this.connected = true;
         return this.remotePubkey;
       }
@@ -1550,11 +1663,13 @@ class Nip46Signer extends BaseSigner {
               if (msg.method === 'connect' && msg.id) {
                 if (resolved) return;
 
-                // Validate secret if we have one (NIP-46 requirement)
-                if (this.connectSecret && msg.params) {
-                  const returnedSecret = msg.params[1]; // [pubkey, secret?, perms?]
+                // Validate secret (NIP-46): when we issued a secret the signer MUST
+                // echo it. Reject connect requests that omit or mismatch it —
+                // accepting them lets any relay that sees our local pubkey spoof
+                // the signer and MITM signing.
+                if (this.connectSecret) {
+                  const returnedSecret = msg.params && msg.params[1]; // [pubkey, secret?, perms?]
                   if (returnedSecret !== this.connectSecret) {
-                    // Invalid secret - potential spoofing, ignore this message
                     return;
                   }
                 }
@@ -1574,10 +1689,10 @@ class Nip46Signer extends BaseSigner {
               if (msg.result) {
                 if (resolved) return;
 
-                // Validate secret if we have one (NIP-46 requirement)
-                // The result should be the secret we sent, or 'ack' for compatibility
-                if (this.connectSecret && msg.result !== this.connectSecret && msg.result !== 'ack') {
-                  // Invalid secret - potential spoofing, ignore this message
+                // Validate secret (NIP-46): the result MUST equal the secret we
+                // sent. Do NOT accept 'ack' when a secret was issued — that escape
+                // hatch lets any relay forge acceptance and hijack the session.
+                if (this.connectSecret && msg.result !== this.connectSecret) {
                   return;
                 }
 
@@ -1606,6 +1721,7 @@ class Nip46Signer extends BaseSigner {
             if (resolved) return;
             resolved = true;
             clearTimeout(timer);
+            if (this.subscription) this.subscription.close();
             reject(new RelayError('Failed to connect to relay', relay));
           }
         }
@@ -1705,8 +1821,12 @@ class Nip46Signer extends BaseSigner {
               // Handle auth challenge (NIP-46 spec)
               // When result is "auth_url", error contains URL for user authentication
               if (msg.result === 'auth_url' && msg.error) {
-                // Keep the pending request alive — signer will send the real
-                // response (ack/result) after the user approves at the URL.
+                // Keep the pending request alive and restart its timeout — the user
+                // must approve out-of-app, which routinely exceeds the base timeout;
+                // otherwise the genuine post-approval response arrives after we gave
+                // up and is silently dropped.
+                const pending = this.pendingRequests.get(msg.id);
+                if (pending && pending.bumpTimeout) pending.bumpTimeout();
                 if (this.onAuthUrl) {
                   this.onAuthUrl(msg.error);
                 } else {
@@ -1757,21 +1877,16 @@ class Nip46Signer extends BaseSigner {
     // Create promise and register pending request BEFORE publishing
     // to avoid race condition where response arrives before we're ready
     const responsePromise = new Promise((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const pending = {};
+      const arm = () => setTimeout(() => {
         this.pendingRequests.delete(id);
         reject(new TimeoutError(`Signer did not respond to ${method}. It may be offline or unavailable.`));
       }, timeout);
-
-      this.pendingRequests.set(id, {
-        resolve: (result) => {
-          clearTimeout(timer);
-          resolve(result);
-        },
-        reject: (err) => {
-          clearTimeout(timer);
-          reject(err);
-        }
-      });
+      pending.timer = arm();
+      pending.bumpTimeout = () => { clearTimeout(pending.timer); pending.timer = arm(); };
+      pending.resolve = (result) => { clearTimeout(pending.timer); resolve(result); };
+      pending.reject = (err) => { clearTimeout(pending.timer); reject(err); };
+      this.pendingRequests.set(id, pending);
     });
 
     // NIP-46 RPC uses NIP-04 encryption (ecosystem standard as of early 2026)
@@ -1839,6 +1954,9 @@ class Nip46Signer extends BaseSigner {
     } catch (_) {}
     this.connected = false;
     this.remotePubkey = null;
+    this.pendingRequests.forEach((p) => {
+      try { p.reject(new NostrError('Disconnected from remote signer', 'NOT_CONNECTED')); } catch (_) {}
+    });
     this.pendingRequests.clear();
   }
 }
@@ -2137,7 +2255,7 @@ class NostrAuth {
     const account = this.accounts.get(pubkey);
     if (account) {
       // Clean up NIP-46 connections
-      if (account.type === 'nip46' && account.signer.disconnect) {
+      if (account.type === 'nip46' && account.signer?.disconnect) {
         account.signer.disconnect();
       }
       this.accounts.delete(pubkey);
@@ -2158,7 +2276,7 @@ class NostrAuth {
 
   logoutAll() {
     this.accounts.forEach((account) => {
-      if (account.type === 'nip46' && account.signer.disconnect) {
+      if (account.type === 'nip46' && account.signer?.disconnect) {
         account.signer.disconnect();
       }
     });
@@ -2206,13 +2324,19 @@ class NostrAuth {
         accounts: Array.from(this.accounts.entries()).map(([pubkey, acc]) => {
           const saved = { pubkey, type: acc.type, metadata: acc.metadata || {} };
 
-          // For NIP-46, save the session credentials (ephemeral key is safe to store)
-          if (acc.type === 'nip46' && acc.signer) {
-            saved.nip46 = {
-              localPrivateKey: bytesToHex(acc.signer.localPrivateKey),
-              remotePubkey: acc.signer.remotePubkey,
-              relays: acc.signer.relays
-            };
+          // For NIP-46, persist the session credentials (ephemeral key is safe to
+          // store). When restored-but-not-yet-reconnected the live signer is null,
+          // so fall back to the retained savedNip46 or the account is lost on reload.
+          if (acc.type === 'nip46') {
+            if (acc.signer) {
+              saved.nip46 = {
+                localPrivateKey: bytesToHex(acc.signer.localPrivateKey),
+                remotePubkey: acc.signer.remotePubkey,
+                relays: acc.signer.relays
+              };
+            } else if (acc.savedNip46) {
+              saved.nip46 = acc.savedNip46;
+            }
           }
 
           return saved;
@@ -3098,10 +3222,17 @@ async function fetchProfile(pubkeyHex, relays, timeoutMs = 5000) {
       relays,
       [{ kinds: [0], authors: [pubkeyHex], limit: 1 }],
       {
-        onEvent: event => {
+        onEvent: async event => {
+          // The relay's `authors` filter is advisory; a malicious relay can return
+          // a forged/mismatched kind:0. Require the author to match and the
+          // signature to verify before trusting it as this user's profile.
+          if (event.pubkey !== pubkeyHex) return;
           if (!best || event.created_at > best.created_at) {
-            best = event;
-            _nuiLog('fetchProfile got event created_at:', event.created_at, 'from', event.pubkey.slice(0,8) + '…');
+            if (!(await verifyEvent(event).catch(() => false))) return;
+            if (!best || event.created_at > best.created_at) {
+              best = event;
+              _nuiLog('fetchProfile got event created_at:', event.created_at, 'from', event.pubkey.slice(0,8) + '…');
+            }
           }
         },
         onEose:  () => { _nuiLog('fetchProfile EOSE'); finish(); },
@@ -3113,35 +3244,55 @@ async function fetchProfile(pubkeyHex, relays, timeoutMs = 5000) {
 
 /** @private */
 const _NUI_PROFILE_PREFIX = 'nostr_profile_';
+/** @private — app-supplied overrides; a separate slot the kind:0 fetch never touches. */
+const _NUI_PROFILE_OVERRIDE_PREFIX = 'nostr_profile_override_';
 /** @private */
 const _NUI_PROFILE_TTL = 24 * 60 * 60 * 1000;
 
-/**
- * Read a Nostr profile from the localStorage cache.
- * Returns null if missing or older than 24 h.
- * @param {string} pubkeyHex
- * @returns {object|null}
- */
-function getCachedProfile(pubkeyHex) {
+/** @private — read the kind:0 slot, honouring the 24 h TTL. */
+function _nuiReadKind0(pubkeyHex) {
   try {
     const raw = localStorage.getItem(_NUI_PROFILE_PREFIX + pubkeyHex);
-    if (!raw) {
-      _nuiLog('getCachedProfile MISS key:', pubkeyHex.slice(0, 8) + '…');
-      return null;
-    }
+    if (!raw) return null;
     const { ts, profile } = JSON.parse(raw);
-    const age = Math.round((Date.now() - ts) / 1000);
-    if (Date.now() - ts > _NUI_PROFILE_TTL) {
-      _nuiLog('getCachedProfile EXPIRED (age ' + age + 's) key:', pubkeyHex.slice(0, 8) + '…');
-      return null;
-    }
-    _nuiLog('getCachedProfile HIT (age ' + age + 's):', profile?.display_name || profile?.name || '(no name)', 'key:', pubkeyHex.slice(0, 8) + '…');
-    return profile;
+    if (Date.now() - ts > _NUI_PROFILE_TTL) return null;
+    return profile || null;
+  } catch { return null; }
+}
+
+/** @private — read the app-supplied override slot (no TTL; the app is authoritative). */
+function _nuiReadOverride(pubkeyHex) {
+  try {
+    const raw = localStorage.getItem(_NUI_PROFILE_OVERRIDE_PREFIX + pubkeyHex);
+    if (!raw) return null;
+    const { profile } = JSON.parse(raw);
+    return profile || null;
   } catch { return null; }
 }
 
 /**
- * Write a Nostr profile to the localStorage cache.
+ * Read a Nostr profile from the localStorage cache.
+ * Merges the kind:0 slot (24 h TTL) with any app-supplied override, the override
+ * winning field-by-field. Returns null only when neither slot has data.
+ * @param {string} pubkeyHex
+ * @returns {object|null}
+ */
+function getCachedProfile(pubkeyHex) {
+  const kind0    = _nuiReadKind0(pubkeyHex);
+  const override = _nuiReadOverride(pubkeyHex);
+  if (!kind0 && !override) {
+    _nuiLog('getCachedProfile MISS key:', pubkeyHex.slice(0, 8) + '…');
+    return null;
+  }
+  const merged = { ...(kind0 || {}), ...(override || {}) };
+  _nuiLog('getCachedProfile HIT:', merged.display_name || merged.name || '(no name)',
+    override ? '(override)' : '', 'key:', pubkeyHex.slice(0, 8) + '…');
+  return merged;
+}
+
+/**
+ * Write a Nostr profile to the localStorage kind:0 cache slot.
+ * Does not touch app overrides written via setProfileOverride.
  * @param {string} pubkeyHex
  * @param {object} profile
  */
@@ -3155,6 +3306,27 @@ function setCachedProfile(pubkeyHex, profile) {
   } catch {}
 }
 
+/**
+ * Write (or clear) an app-supplied profile override. The override slot is kept
+ * separate from the kind:0 slot the background relay fetch writes, so an
+ * app-chosen name/avatar survives re-login and wins at render time. Pass a
+ * falsy `profile` to remove the override.
+ * @param {string} pubkeyHex
+ * @param {object|null} profile  Partial kind:0-shaped profile, or null to clear.
+ */
+function setProfileOverride(pubkeyHex, profile) {
+  try {
+    const key = _NUI_PROFILE_OVERRIDE_PREFIX + pubkeyHex;
+    if (!profile) {
+      localStorage.removeItem(key);
+      _nuiLog('setProfileOverride CLEAR key:', pubkeyHex.slice(0, 8) + '…');
+      return;
+    }
+    localStorage.setItem(key, JSON.stringify({ ts: Date.now(), profile }));
+    _nuiLog('setProfileOverride key:', pubkeyHex.slice(0, 8) + '…', '| name:', profile?.display_name || profile?.name || '(none)');
+  } catch {}
+}
+
 // ============================================================================
 // LOGIN UI
 // ============================================================================
@@ -3163,7 +3335,7 @@ function setCachedProfile(pubkeyHex, profile) {
 function _nuiE(s) {
   return String(s)
     .replace(/&/g, '&amp;').replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    .replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
 }
 
 /**
@@ -3234,6 +3406,7 @@ function _nuiGetStyles() {
 .nui-guest-section{text-align:center;padding-top:12px;border-top:1px solid var(--nui-border,#27272a);margin-top:12px}
 .nui-guest-btn{background:none;border:none;color:var(--nui-muted,#71717a);font-size:12px;cursor:pointer;transition:color .15s;font-family:inherit}
 .nui-guest-btn:hover{color:var(--nui-primary,#6366f1)}
+.nui-guest-hint{margin:6px auto 0;font-size:11px;color:var(--nui-muted,#71717a);line-height:1.4;max-width:300px}
 .nui-btn{padding:10px 18px;border-radius:8px;border:none;font-size:14px;cursor:pointer;transition:all .15s;font-family:inherit}
 .nui-btn-primary{background:var(--nui-primary,#6366f1);color:#fff}
 .nui-btn-primary:hover{background:var(--nui-primary-hover,#4f46e5)}
@@ -3312,6 +3485,8 @@ class NostrLoginUI {
    * @param {boolean}     [options.useHistory=true]
    * @param {boolean}     [options.allowCamera=true]
    * @param {boolean}     [options.allowDeepLink=true]
+   * @param {string}      [options.guestLabel]    HTML for the guest-mode button (default: "Just trying things out? <strong>Use Guest Mode</strong>")
+   * @param {string}      [options.guestHint]     Optional muted hint line rendered under the guest button
    * @param {boolean}     [options.showHeader=true]   Mount a fixed app-header bar when connected; set false to suppress (e.g. host page renders its own nav chip)
    * @param {Function}    [options.onHeader]      (slotEl) => void — called once when the header is first created; populate slotEl with custom nav content
  * @param {Function}    [options.onConnected]  (pubkey, profile) => void — fired immediately with cached profile (may be null), again once live profile resolves
@@ -3328,6 +3503,8 @@ class NostrLoginUI {
     this._useHistory     = options.useHistory     !== false;
     this._allowCamera    = options.allowCamera    !== false;
     this._allowDeepLink  = options.allowDeepLink  !== false;
+    this._guestLabel     = options.guestLabel     || `Just trying things out? <strong>Use Guest Mode</strong>`;
+    this._guestHint      = options.guestHint      || '';
     this._showHeader     = options.showHeader     !== false;
     this._onHeaderCb     = options.onHeader       || null;
     this._onConnectedCb  = options.onConnected    || null;
@@ -3427,7 +3604,8 @@ class NostrLoginUI {
         `<div class='nui-group-label'>Connect with Nostr signer</div>` +
         `<div class='nui-connect-opts'></div>` +
         `<div class='nui-guest-section nui-hidden'>` +
-          `<button class='nui-guest-btn' data-a='doGuest'>Just trying things out? <strong>Use Guest Mode</strong></button>` +
+          `<button class='nui-guest-btn' data-a='doGuest'>${this._guestLabel}</button>` +
+          (this._guestHint ? `<p class='nui-guest-hint'>${this._guestHint}</p>` : ``) +
         `</div>` +
       `</div>` +
       `<div class='nui-view-paste nui-hidden'>` +
@@ -3537,7 +3715,7 @@ class NostrLoginUI {
       const s  = this._q('.nui-status');
       s.className = 'nui-status nui-approval';
       s.innerHTML = `<div class='nui-countdown-num'>${ts}</div>` +
-        (authUrl ? `<div class='nui-status-detail'><a href='${_nuiE(authUrl)}' target='_blank' rel='noopener'>Open signer app &rarr;</a></div>` : '');
+        (authUrl && /^https?:\/\//i.test(authUrl) ? `<div class='nui-status-detail'><a href='${_nuiE(authUrl)}' target='_blank' rel='noopener'>Open signer app &rarr;</a></div>` : '');
       s.classList.remove('nui-hidden');
     };
     render();
@@ -3558,6 +3736,7 @@ class NostrLoginUI {
     this._recentExpanded = false;
     this._clearCountdown();
     this._hideAll();
+    this.el.classList.remove('nui-hidden'); // un-hide card (e.g. after back-button logout)
     this._setTitle('Login with Nostr', 'Choose how to sign in');
     this._q('.nui-view-options').classList.remove('nui-hidden');
     this._view = 'options';
@@ -3644,7 +3823,7 @@ class NostrLoginUI {
     try {
       const pubkey = await this.auth.connectExtension();
       this._saveRecentExtension(pubkey);
-      if (this._pendingRecentIdx !== null) { this._markRecentSuccess(this._pendingRecentIdx); this._pendingRecentIdx = null; }
+      this._pendingRecentIdx = null; // fresh entry already unshifted; marking by the stale pre-reorder index corrupted an unrelated row
       await this._showConnected(pubkey);
     } catch (e) {
       if (this._pendingRecentIdx !== null) { this._markRecentFailed(this._pendingRecentIdx); this._pendingRecentIdx = null; }
@@ -3674,7 +3853,7 @@ class NostrLoginUI {
       const ephemPub    = keyHex ? bytesToHex(getPublicKey(hexToBytes(keyHex))) : pubkey;
       const displayName = nameVal || encodeNpub(ephemPub).slice(0, 12);
       this._saveRecentBunker(raw, keyHex, displayName, 'bunker', pubkey);
-      if (this._pendingRecentIdx !== null) { this._markRecentSuccess(this._pendingRecentIdx); this._pendingRecentIdx = null; }
+      this._pendingRecentIdx = null; // fresh entry already unshifted; marking by the stale pre-reorder index corrupted an unrelated row
       await this._showConnected(pubkey, `Bunker: ${displayName}`);
     } catch (e) {
       this._clearCountdown();
@@ -4226,6 +4405,7 @@ export {
   fetchProfile,
   getCachedProfile,
   setCachedProfile,
+  setProfileOverride,
 
   // Profile rendering helpers
   nuiAvatarHtml,
