@@ -96,3 +96,74 @@ pub fn booking_invalid_message(form_slug: &str, slot: &str, plaintext: &str) -> 
          (expired, blocked, or never valid). Visitor details below.\n\n{plaintext}"
     )
 }
+
+// ---------------------------------------------------------------------------
+// Structured owner alerts -> the NOTIFY service binding (nostr-notify /alert).
+//
+// RECOVERED 2026-07-25. The edit that added this was pruned from the session
+// transcripts, so it is reconstructed from the CONSUMER, which is authoritative:
+// `../../nostr-notify/src/index.ts` (`/alert` handler) and `src/format.ts`
+// (`AlertPayload`). Rendering — subject line, field ordering, timezone — lives
+// in nostr-notify; the processor supplies domain data only.
+//
+// NOTE: `crate::alerts` is a SUPERSEDED earlier design that built email bodies
+// here and published them as plaintext `["l","email"]` events via the relay.
+// The shipped design POSTs JSON to NOTIFY instead. `alerts.rs` is kept for
+// provenance but is not on this path.
+// ---------------------------------------------------------------------------
+
+/// `AlertPayload` per nostr-notify/src/format.ts. `fields` carries PII and is
+/// emailed to the owner only — never persisted here.
+pub fn alert_submission(form_name: &str, fields: serde_json::Value) -> serde_json::Value {
+    serde_json::json!({ "type": "submission", "form": form_name, "fields": fields })
+}
+
+pub fn alert_booking(
+    form_name: &str,
+    starts_at: i64,
+    status: &str,
+    fields: serde_json::Value,
+) -> serde_json::Value {
+    serde_json::json!({
+        "type": "booking",
+        "form": form_name,
+        "starts_at": starts_at,
+        "status": status,
+        "fields": fields,
+    })
+}
+
+/// Pull the `fields` object out of a decrypted submission payload.
+/// Shape: `{"form_id":"…","slot_id":"…","fields":{…}}`.
+pub fn fields_of(plaintext: &str) -> serde_json::Value {
+    serde_json::from_str::<serde_json::Value>(plaintext)
+        .ok()
+        .and_then(|v| v.get("fields").cloned())
+        .unwrap_or_else(|| serde_json::json!({}))
+}
+
+/// POST a structured alert to the NOTIFY Worker. Awaited deliberately: this
+/// runs inside the cron invocation, and nostr-notify documents that a
+/// backgrounded send gets cancelled when the invocation ends, which silently
+/// dropped booking emails.
+pub async fn send_alert(env: &Env, payload: &serde_json::Value) -> Result<()> {
+    let notify = env.service("NOTIFY")?;
+    let headers = Headers::new();
+    headers.set("Content-Type", "application/json")?;
+    let req = Request::new_with_init(
+        "https://notify.internal/alert",
+        RequestInit::new()
+            .with_method(Method::Post)
+            .with_headers(headers)
+            .with_body(Some(payload.to_string().into())),
+    )?;
+    let resp = notify.fetch_request(req).await?;
+    // The handler answers 202 Accepted on success.
+    if resp.status_code() != 202 {
+        return Err(Error::RustError(format!(
+            "notify /alert returned {}",
+            resp.status_code()
+        )));
+    }
+    Ok(())
+}

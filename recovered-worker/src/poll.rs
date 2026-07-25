@@ -201,6 +201,32 @@ pub async fn run_once(env: &Env) -> Result<()> {
             Ok(()) => {
                 storage::set_delivery(&db, &event.id, ok_status, true).await?;
                 delivered += 1;
+
+                // Owner email alert via the NOTIFY binding. Metadata + the
+                // decrypted fields; nostr-notify renders and sends. A failure
+                // here must not undo a delivered submission, so it only logs.
+                let fields = notify::fields_of(&plaintext);
+                let alert = match &booking_outcome {
+                    Some(BookingOutcome::Booked { starts_at, .. }) => {
+                        Some(notify::alert_booking(&form.name, *starts_at, "booked", fields))
+                    }
+                    // `slot_id` is `<slug>:<starts_at>` — recover the time so
+                    // the email still says *when*, even on a failed claim.
+                    Some(BookingOutcome::Conflict { slot }) => {
+                        let at = crate::booking::parse_slot_id(slot).map(|(_, t)| t).unwrap_or(0);
+                        Some(notify::alert_booking(&form.name, at, "conflict", fields))
+                    }
+                    Some(BookingOutcome::Invalid { slot }) => {
+                        let at = crate::booking::parse_slot_id(slot).map(|(_, t)| t).unwrap_or(0);
+                        Some(notify::alert_booking(&form.name, at, "invalid", fields))
+                    }
+                    None => Some(notify::alert_submission(&form.name, fields)),
+                };
+                if let Some(a) = alert {
+                    if let Err(e) = notify::send_alert(env, &a).await {
+                        console_log!("poll: alert failed for {}: {e:?}", event.id);
+                    }
+                }
             }
             Err(e) => console_log!("poll: delivery failed for {}: {e:?}", event.id),
         }

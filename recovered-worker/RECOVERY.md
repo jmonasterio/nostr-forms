@@ -1,9 +1,36 @@
 # Recovered Worker source — `forms.argw.com`
 
-**Status: compiles to wasm32, 40/40 tests pass, produces a deployable bundle.
-NOT yet deployed. NOT byte-identical to what is live.**
+**Status: recovered, compiles to wasm32, 40/40 tests pass, deployed to staging
+and diffed against live. NOT deployed to production.**
 
 Recovered 2026-07-25 from omp agent session transcripts.
+
+## Verified against live
+
+Staging Worker `nostr-form-rs-v2` (workers.dev only, scratch D1, **no cron**)
+was deployed from this source and compared with `forms.argw.com`:
+
+| Route | Live | Recovered | |
+|---|---|---|---|
+| `/`, `/healthz` | 200 `nostr-form-rs ok` | 200 `nostr-form-rs ok` | match |
+| `/admin/config` | 200 JSON | 200 JSON | match (data differs — scratch DB) |
+| `/admin/forms`, `/admin/submissions`, `/admin/slots`, `/admin/poll-now` | 401 | 401 | match, identical body |
+| `/booking/<unknown>/slots` | 404 | 404 | match |
+| `/nonexistent` | 404 | 404 | match |
+
+**The decisive one:** seeding the scratch D1 with the live discovery-call form's
+actual `options_json` (`America/Los_Angeles`, 30 min, Mon–Fri 08:00–17:00,
+2-week horizon, 1440 min notice) and hitting `/booking/vgFZPC9h/slots` on both:
+
+```
+live      180 slots   tz America/Los_Angeles
+recovered 180 slots   tz America/Los_Angeles
+identical slot set: true   (0 only-live, 0 only-recovered)
+```
+
+Same slot ids, same `starts_at` values. That single call exercises rule
+expansion, DST offsets, horizon bounds, min-notice filtering and slot-id
+generation — i.e. all of `booking.rs`, the largest recovered module.
 
 ## What happened
 
@@ -48,15 +75,41 @@ gone. Two consequences were found and fixed by the compiler; one remains open
 - Resolved dependency versions match the deployed build: `worker 0.8.3`,
   `k256 0.13.4`, and `worker-build 0.8.3` is the installed toolchain.
 
-## Known gap
+## The owner-alert gap — CLOSED
 
-`src/alerts.rs` (owner email-alert bodies, written 2026-06-14 — the last
-session) is **orphaned**. Its doc comment references
-`notify::publish_email_alert`, which does not exist in the recovered
-`notify.rs`; the edit adding it was pruned. The module is wired into `lib.rs`
-and its 3 unit tests pass, but nothing calls it.
+`src/alerts.rs` (written 2026-06-14, the last session) was orphaned: its doc
+comment referenced `notify::publish_email_alert`, which the pruned edits took
+with them.
 
-This is the most likely explanation for the size delta:
+Rather than guess, the contract was read off the **consumer**, which is
+authoritative and present on disk: `../../nostr-notify/src/index.ts` (`/alert`
+handler) and `src/format.ts` (`AlertPayload`). That revealed `alerts.rs` is a
+**superseded design** — it built email bodies here and published them as
+plaintext `["l","email"]` events through the relay. The shipped design instead
+POSTs structured JSON straight to the `NOTIFY` service binding, with all
+rendering (subject, field order, timezone) living in nostr-notify:
+
+```json
+{ "type": "booking"|"submission", "form": "...",
+  "starts_at": 1234567890, "status": "booked"|"conflict"|"invalid",
+  "fields": { ... } }        // -> 202 Accepted
+```
+
+Added to `notify.rs`: `send_alert`, `alert_submission`, `alert_booking`,
+`fields_of`. Wired into `poll.rs` immediately after a successful DM delivery,
+awaited (nostr-notify documents that a backgrounded send is cancelled when the
+cron invocation ends — that bug silently dropped booking emails once already),
+and failure-isolated so a dead alert never un-delivers a submission. Conflict
+and invalid outcomes recover `starts_at` from the `<slug>:<unix>` slot id so
+the email still says *when*.
+
+`alerts.rs` is kept for provenance, marked superseded, and is not on this path.
+
+**Not end-to-end verified:** exercising it for real would send actual email to
+the owner's verified inbox. The payload shape is typechecked against
+`AlertPayload` by inspection, not by a live send.
+
+## Remaining delta vs the deployed build
 
 ```
 rebuilt  index_bg.wasm  621,191 bytes  (53 exports)
@@ -66,9 +119,8 @@ deployed index_bg.wasm  800,126 bytes  (51 exports)   -22.4%
 Export-name diffs are internal `wasm-bindgen` closure indices and abort
 handlers, not API surface. **The reconstruction is ~2 days behind the live
 deploy** (last transcript activity 2026-06-14; live `modified_on` 2026-06-16).
-
-`publish_email_alert` was deliberately **not** invented — fabricating it would
-put unverifiable code next to verified code.
+Every route that could be compared behaves identically (see top), so whatever
+differs is not in the HTTP surface or the booking engine.
 
 ## Fixes applied during recovery
 

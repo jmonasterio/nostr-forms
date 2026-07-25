@@ -1,0 +1,43 @@
+# STAGING config — safe to deploy, cannot touch production.
+#
+#   npx wrangler deploy -c wrangler.staging.toml
+#
+# Differences from production, all deliberate:
+#   * name        -> nostr-form-rs-v2, so it never binds forms.argw.com
+#   * no custom domain; reachable only on workers.dev
+#   * FORMS       -> a scratch D1, so live submissions are untouched
+#   * NO [triggers] -> the cron never fires. This is the important one: a poll
+#     would read real envelopes off the relay, publish real gift-wrap DMs, and
+#     POST real owner emails through NOTIFY. Staging exercises the HTTP surface
+#     only. Trigger a poll deliberately with POST /admin/poll-now if you ever
+#     want it, and only against a scratch relay.
+#   * PROCESSOR_PUBKEY / ADMIN_PUBKEY -> throwaway keys, not the real identities.
+
+name = "nostr-form-rs-v2"
+main = "build/worker/shim.mjs"
+compatibility_date = "2025-01-01"
+
+[build]
+command = "worker-build --release"
+
+[[services]]
+binding = "RELAY"
+service = "nostr-relay"
+environment = "production"
+
+[[services]]
+binding = "NOTIFY"
+service = "nostr-notify"
+environment = "production"
+
+[[d1_databases]]
+binding = "FORMS"
+database_name = "nostr-form-rs-staging"
+database_id = "b08d756f-5632-4357-baf7-73f24b46e220"
+
+# NO [triggers] — see header.
+
+[vars]
+PROCESSOR_PUBKEY = "b2f00cd61549b9377c45ee4a4e65cb5c24b429f2f0627fce9ae06f699a4f3f28"
+ADMIN_PUBKEY = "6337a3fae44b916f1c70cb68b3b5aeecf3a5ef8059329bef80c6fc119c725826"
+DEFAULT_POW_BITS = "16"

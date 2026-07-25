@@ -1,7 +1,9 @@
 //! Owner email-alert bodies — pure string builders, no worker deps so they
 //! compile and unit-test on the host (like `booking` / `form_id`).
 //!
-//! These become the `content` of the plaintext `["l","email"]` event the
+//! SUPERSEDED (see notify.rs `send_alert`): the shipped design POSTs a
+//! structured AlertPayload to the NOTIFY binding and lets nostr-notify render.
+//! Kept for provenance; nothing calls these.
 //! processor publishes (see `notify::publish_email_alert`); the relay's
 //! NOTIFY hook forwards it to the emailer, which turns the first line into
 //! the email subject. **Metadata-only** — never embed the sealed submission

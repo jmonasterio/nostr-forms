@@ -1,3 +1,12 @@
+# PRODUCTION config for the live `forms.argw.com` Worker.
+#
+# Values below are the REAL ones, read from the live account on 2026-07-25
+# (`GET /accounts/{id}/workers/scripts/nostr-form-rs/bindings`), not guesses.
+#
+# ⚠️  Deploying this REPLACES the live forms backend for
+#     executiveaiguidance.com. The recovered source is ~2 days behind the
+#     deployed build — see RECOVERY.md. Use `wrangler.staging.toml` first.
+
 name = "nostr-form-rs"
 main = "build/worker/shim.mjs"
 compatibility_date = "2025-01-01"
@@ -5,32 +14,40 @@ compatibility_date = "2025-01-01"
 [build]
 command = "worker-build --release"
 
-# In-account service binding to the relay Worker. Calls go through
-# `env.RELAY.fetch(...)` — no network hop, no auth ceremony beyond the
-# admin token, mirrors the original "form-rs subscribes to the relay" wiring.
+# In-account service binding to the relay Worker. `env.RELAY.fetch(...)` —
+# no network hop; the poll reads via /admin/poll and publishes via
+# /admin/publish, both gated by ADMIN_INTERNAL_TOKEN.
 [[services]]
 binding = "RELAY"
 service = "nostr-relay"
+environment = "production"
 
-# D1: replaces argw's `forms.db`. Schema in `src/schema.rs::DDL_STATEMENTS`.
-# Create with `wrangler d1 create nostr-form-rs` then paste the id below.
+# Owner email alerts. The processor POSTs an AlertPayload to /alert; all
+# rendering lives in nostr-notify (see ../../nostr-notify/src/format.ts).
+[[services]]
+binding = "NOTIFY"
+service = "nostr-notify"
+environment = "production"
+
+# D1: replaces argw's `forms.db`. Schema in `src/schema.rs::DDL_STATEMENTS`,
+# applied idempotently by `storage::ensure_schema` on every poll.
 [[d1_databases]]
 binding = "FORMS"
 database_name = "nostr-form-rs"
-database_id = "REPLACE_WITH_OUTPUT_OF_wrangler_d1_create"
+database_id = "f4dc3389-d2e4-4119-a196-510c97ebe585"
 
 [triggers]
-# Every minute. The poll handler walks since=last_seen to now.
+# Every minute. The poll handler walks since=cursors.envelope_since to now.
 crons = ["* * * * *"]
 
 [vars]
 # Pubkey we tell the relay to filter on (mailbox recipient = us).
-PROCESSOR_PUBKEY = "REPLACE_WITH_PROCESSOR_X_ONLY_HEX"
-# Admin pubkey we notify when a submission lands.
-ADMIN_PUBKEY     = ""
-# PoW threshold for outbound DMs (matches relay default).
+PROCESSOR_PUBKEY = "43100984ca619f567af6863c551c7c9ce5b75caead212e9334ca8cc88c9bc6c6"
+# Admin pubkey allowed to use the NIP-98 /admin/* API.
+ADMIN_PUBKEY = "777d0ead9065a316d57773164ac4d013708f30f1235f089e12c22c4bbe4b625a"
+# PoW threshold for inbound submissions (matches relay default).
 DEFAULT_POW_BITS = "16"
 
 # Secrets — set via `wrangler secret put`:
-#   PROCESSOR_NSEC      — the processor's hex secret key (NIP-44 decryption + DM signing)
+#   PROCESSOR_NSEC       — processor hex secret key (NIP-44 decrypt + DM signing)
 #   ADMIN_INTERNAL_TOKEN — must match the relay Worker's ADMIN_INTERNAL_TOKEN
