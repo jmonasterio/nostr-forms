@@ -41,15 +41,30 @@ is running on `forms.argw.com` is a different, newer implementation:
   `admin/slots`, and no source with those routes exists anywhere under
   `C:\github`.
 
-[INFERENCE] This Rust tree is a superseded earlier implementation. The
-source that actually builds `forms.argw.com` is not on this machine — find
-it before changing anything user-facing, and treat this repo as legacy
-until that's resolved.
+This Rust tree is a superseded earlier implementation. The source that
+actually builds `forms.argw.com` is **confirmed** not on this machine —
+searched all of `C:\github`, `C:\gitlab`, `C:\src`, and every branch of
+`origin`. Treat this repo as legacy.
+
+**The live bundle was recovered on 2026-07-25** and lives at
+`deployed-worker-2026-06-16/` — `shim.js` plus a WASM that validates (152
+imports, 51 exports). That directory's README also carries a *reconstructed
+deployment contract* read from the live account, not guessed: all 8 bindings,
+the verbatim D1 schema (7 tables, 4 indexes), the `* * * * *` cron, the full
+route table, and the seven Worker module names mined from the WASM's panic
+strings (`admin.rs booking_routes.rs decrypt.rs notify.rs poll.rs sign.rs
+storage.rs`). Read that before attempting any rebuild.
+
+**The live service is healthy** (verified 2026-07-25 against its D1): cron
+ticking every minute, 15/15 submissions `delivered`, all three
+`executiveaiguidance.com` forms active and wired into the live pages. There is
+no outage to fix, so there is no reason to rebuild.
 
 > **Do not `wrangler deploy` this repo to `forms.argw.com`.** It would
 > replace a working NIP-98 + booking backend with an older Bearer-token API
 > that has no slots support, breaking the live contact, booking, and
-> newsletter forms on `executiveaiguidance.com`.
+> newsletter forms on `executiveaiguidance.com`. If you must rebuild, deploy
+> to a throwaway Worker name and diff against live first.
 
 ### The retired droplet (true, but it did not break forms)
 
