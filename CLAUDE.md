@@ -14,7 +14,7 @@ end of this section.
 | Marketing site + forms | `executiveaiguidance.com` — CF Pages project `executiveaiguidance-com`, deployed from `../executive-ai-training` (`deploy.sh` → `wrangler pages deploy html/`) | Serves the real site; `/forms.js`, `/main.js`, `/booking.js` all 200 |
 | Form SDK config | `html/main.js` → `NostrForms.init({ relayUrl: 'wss://relay.argw.com', processorPubkey: '43100984…' })` | Read from the live JS |
 | Live forms | `MpAETNds` (contact), `vgFZPC9h` (booking, `data-pow="16"`), `bGFqnzYT` (newsletter) | `data-nostr-form` attrs on the live `/contact` page |
-| Relay | `wss://relay.argw.com` — CF Worker + Durable Object (`../cf-migration/src/nostr-relay`) | NIP-11 doc responds |
+| Relay | `wss://relay.argw.com` — CF Worker + Durable Object (`../nostr-relay-rs`) | NIP-11 doc responds |
 | **Form processor + admin API** | **`forms.argw.com` — a live CF Worker** | `/admin/config` → 200 JSON with the real admin + processor pubkeys; `/admin/forms`, `/admin/submissions`, `/admin/slots`, `/admin/poll-now` → 401 `unauthorized: missing or malformed Authorization header` |
 | Booking widget backend | `forms.argw.com` | `booking.js` fetches it directly |
 
@@ -62,7 +62,7 @@ the Cloudflare Worker above. `deploy/install.sh` here is a generic
 Debian/Ubuntu installer (not argw-specific) and still works for self-hosting
 this legacy tree, but it is not what runs in production.
 
-Note: `../cf-migration/projects/nostr/PLAN.md` still lists Phase 3
+Note: `../cf-infra/docs/nostr-stack-migration.md` still lists Phase 3
 (nostr-form-rs → Worker) as unbuilt. That plan is **stale** — reality
 overtook it. Trust the probes above over that document.
 
@@ -141,6 +141,6 @@ web/
 | `executive-ai-training` | **Live customer site** `executiveaiguidance.com` (CF Pages, `deploy.sh`). `html/main.js` holds the live `NostrForms.init` config; `html/contact.html` carries the three live `data-nostr-form` ids. This is the thing that breaks if the forms backend changes. |
 | `nostr-form-rs.deploy` | **Retired.** SSH/scp deploy scripts + config for the closed argw.com droplet. |
 | `nostr-relay` | Companion Nostr relay source (pre-migration Rust/systemd copy) |
-| `nostr-relay.deploy` | **Retired.** SSH deploy scripts for the same closed droplet; the relay now deploys via `wrangler` from `cf-migration/src/nostr-relay`. |
-| `cf-migration` | Cloudflare migration plan + migrated Worker sources. `src/nostr-relay` is the live relay Worker. Its `projects/nostr/PLAN.md` Phase 3 ("nostr-form-rs → Worker") is **stale** — it describes the port as unbuilt, but a forms Worker is already live at `forms.argw.com`. |
+| `nostr-relay.deploy` | **Retired.** SSH deploy scripts for the same closed droplet; the relay now deploys via `wrangler` from `nostr-relay-rs`. |
+| `cf-infra` | Cloudflare migration plan + shared CF credentials/tooling; the live relay Worker moved out to `nostr-relay-rs`. Its `cf-infra/docs/nostr-stack-migration.md` Phase 3 ("nostr-form-rs → Worker") is **stale** — it describes the port as unbuilt, but a forms Worker is already live at `forms.argw.com`. |
 | `nostr-crypto-rs` | Shared pure-Rust NIP-44/59/98/26 crate this repo now depends on (see Crypto). |
