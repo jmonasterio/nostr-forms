@@ -1,3 +1,3 @@
 mod dm;
 
-pub use dm::{send_dm, WsSink};
+pub(crate) use dm::{event_id_hash, schnorr_sign, send_dm, WsSink};

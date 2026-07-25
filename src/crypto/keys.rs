@@ -1,52 +1,51 @@
-use rand::rngs::OsRng;
-use rand::RngCore;
-use secp256k1::{PublicKey, Secp256k1, SecretKey};
+//! Nostr keypair helpers backed by the shared `nostr-crypto` crate's k256
+//! implementation (`../../../nostr-crypto-rs`) — pure Rust, wasm32-clean,
+//! unlike the `secp256k1` C-binding crate this used to wrap. Single source
+//! of truth across the nostr stack (kvdb, form-rs, relay's NIP-98 admin
+//! auth); see CLAUDE.md "Deployment" for why wasm-clean crypto matters here.
 
-/// Generate a new keypair
+use k256::{PublicKey, SecretKey};
+
+/// Generate a new keypair.
 pub fn generate_keypair() -> (SecretKey, PublicKey) {
-    let secp = Secp256k1::new();
-    let (secret_key, public_key) = secp.generate_keypair(&mut OsRng);
+    let secret_key = nostr_crypto::keys::random_secret();
+    let public_key = secret_key.public_key();
     (secret_key, public_key)
 }
 
-/// Convert public key to hex string (x-only, 32 bytes)
+/// Convert public key to hex string (x-only, 32 bytes).
 pub fn pubkey_to_hex(pubkey: &PublicKey) -> String {
-    let serialized = pubkey.serialize();
-    // Skip the first byte (parity flag) for x-only pubkey
-    hex::encode(&serialized[1..])
+    nostr_crypto::keys::xonly_hex(pubkey)
 }
 
-/// Convert secret key to hex string
+/// Convert secret key to hex string.
 pub fn privkey_to_hex(privkey: &SecretKey) -> String {
-    hex::encode(privkey.secret_bytes())
+    hex::encode(privkey.to_bytes())
 }
 
-/// Parse secret key from hex
+/// Parse secret key from hex.
 pub fn privkey_from_hex(hex_str: &str) -> anyhow::Result<SecretKey> {
     let bytes = hex::decode(hex_str)?;
-    let key = SecretKey::from_slice(&bytes)?;
+    let key = SecretKey::from_slice(&bytes).map_err(|e| anyhow::anyhow!("invalid secret key: {e}"))?;
     Ok(key)
 }
 
-/// Parse public key from hex (x-only, 32 bytes)
+/// Parse public key from hex (x-only, 32 bytes). Lifts to the even-y point
+/// per the Nostr/BIP-340 convention — there is exactly one valid x-only
+/// pubkey per key, so (unlike the old secp256k1 code) there's no need to
+/// try both parities.
 pub fn pubkey_from_hex(hex_str: &str) -> anyhow::Result<PublicKey> {
     let bytes = hex::decode(hex_str)?;
-    if bytes.len() != 32 {
-        anyhow::bail!("Invalid pubkey length");
-    }
-    // Try both parities since we only store x-coordinate
-    let mut full = vec![0x02];
-    full.extend_from_slice(&bytes);
-    if let Ok(key) = PublicKey::from_slice(&full) {
-        return Ok(key);
-    }
-    full[0] = 0x03;
-    let key = PublicKey::from_slice(&full)?;
-    Ok(key)
+    let xonly: [u8; 32] = bytes
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("invalid pubkey length"))?;
+    Ok(nostr_crypto::nip44::pubkey_from_xonly(&xonly)?)
 }
 
 /// Generate a random form ID (8 base58-like characters)
 pub fn generate_form_id() -> String {
+    use rand::rngs::OsRng;
+    use rand::RngCore;
     let mut random_bytes = [0u8; 8];
     OsRng.fill_bytes(&mut random_bytes);
 
@@ -103,7 +102,7 @@ mod tests {
         let privkey2 = privkey_from_hex(&priv_hex).unwrap();
         let pubkey2 = pubkey_from_hex(&pub_hex).unwrap();
 
-        assert_eq!(privkey, privkey2);
+        assert_eq!(priv_hex, privkey_to_hex(&privkey2));
         assert_eq!(pub_hex, pubkey_to_hex(&pubkey2));
     }
 

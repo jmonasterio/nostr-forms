@@ -1,6 +1,6 @@
 use crate::crypto::{keys, nip44};
 use crate::registry::models::SubmissionPayload;
-use secp256k1::SecretKey;
+use k256::SecretKey;
 
 /// Decrypt a form submission and parse the payload
 pub fn decrypt_submission(

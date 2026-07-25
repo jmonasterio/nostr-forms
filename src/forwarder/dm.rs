@@ -12,7 +12,7 @@
 //! exposed on the wire.
 
 use futures_util::{SinkExt, StreamExt};
-use secp256k1::{Secp256k1, SecretKey};
+use k256::SecretKey;
 use serde_json::{json, Value};
 use tokio::sync::Mutex;
 use tokio_tungstenite::tungstenite::Message;
@@ -62,9 +62,7 @@ pub async fn send_dm(
     let recipient_pubkey = keys::pubkey_from_hex(notify_pubkey)?;
 
     // ── Step 1: rumor (unsigned kind-14) ─────────────────────────────────────
-    let secp = Secp256k1::new();
-    let processor_pub = secp256k1::PublicKey::from_secret_key(&secp, processor_privkey);
-    let processor_pub_hex = keys::pubkey_to_hex(&processor_pub);
+    let processor_pub_hex = keys::pubkey_to_hex(&processor_privkey.public_key());
 
     let rumor_created_at = chrono::Utc::now().timestamp();
     let rumor = json!({
@@ -90,7 +88,7 @@ pub async fn send_dm(
         seal_content
     ]);
     let seal_id = event_id_hash(&seal_json)?;
-    let seal_sig = schnorr_sign(&seal_id, processor_privkey, &secp)?;
+    let seal_sig = schnorr_sign(&seal_id, processor_privkey)?;
 
     let seal = json!({
         "id":         seal_id,
@@ -121,7 +119,7 @@ pub async fn send_dm(
         &wrap_content,
         pow_difficulty,
     )?;
-    let wrap_sig = schnorr_sign(&wrap_id, &wrap_privkey, &secp)?;
+    let wrap_sig = schnorr_sign(&wrap_id, &wrap_privkey)?;
 
     let gift_wrap = json!({
         "id":         wrap_id,
@@ -166,18 +164,19 @@ pub async fn send_dm(
 // ── Helpers ──────────────────────────────────────────────────────────────────
 
 /// SHA-256 of the canonical NIP-01 serialisation, returned as hex.
-fn event_id_hash(canonical: &Value) -> anyhow::Result<String> {
+pub(crate) fn event_id_hash(canonical: &Value) -> anyhow::Result<String> {
     use sha2::{Digest, Sha256};
     let s = serde_json::to_string(canonical)?;
     Ok(hex::encode(Sha256::digest(s.as_bytes())))
 }
 
 /// Schnorr-sign an event id (hex) with the given key.
-fn schnorr_sign(id_hex: &str, privkey: &SecretKey, secp: &Secp256k1<secp256k1::All>) -> anyhow::Result<String> {
+pub(crate) fn schnorr_sign(id_hex: &str, privkey: &SecretKey) -> anyhow::Result<String> {
     let id_bytes = hex::decode(id_hex)?;
-    let msg = secp256k1::Message::from_digest_slice(&id_bytes)?;
-    let sig = secp.sign_schnorr_no_aux_rand(&msg, &privkey.keypair(secp));
-    Ok(hex::encode(sig.as_ref()))
+    let msg32: [u8; 32] = id_bytes
+        .try_into()
+        .map_err(|_| anyhow::anyhow!("event id must be 32 bytes"))?;
+    Ok(nostr_crypto::keys::schnorr_sign_hex(privkey, &msg32)?)
 }
 
 /// Add a small random jitter (±300 s) to a timestamp to prevent timing
@@ -257,7 +256,7 @@ mod tests {
         let plaintext = r#"{"kind":14,"content":"hello"}"#;
         let encrypted = nip44::encrypt(plaintext, &sender_priv, &recipient_pub).unwrap();
 
-        let sender_pub = secp256k1::PublicKey::from_secret_key(&Secp256k1::new(), &sender_priv);
+        let sender_pub = sender_priv.public_key();
         let decrypted = nip44::decrypt(&encrypted, &recipient_priv, &sender_pub).unwrap();
         assert_eq!(plaintext, decrypted);
     }

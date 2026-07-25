@@ -2,14 +2,14 @@ use std::sync::Arc;
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
-use secp256k1::SecretKey;
+use k256::SecretKey;
 use tokio::sync::Mutex;
 use tokio::time::sleep;
 use tokio_tungstenite::{connect_async, tungstenite::Message};
 use tracing::{debug, error, info, warn};
 
 use crate::crypto::keys::{self, verify_pow};
-use crate::forwarder::{send_dm, WsSink};
+use crate::forwarder::{event_id_hash, schnorr_sign, send_dm, WsSink};
 use crate::registry::models::{DeliveryStatus, FormStatus, Submission, SubmissionType};
 use crate::registry::storage::Database;
 
@@ -25,11 +25,7 @@ pub async fn run(
     processor_privkey: SecretKey,
     dm_relays: Vec<String>,
 ) -> anyhow::Result<()> {
-    let processor_pubkey = {
-        let secp = secp256k1::Secp256k1::new();
-        let pubkey = secp256k1::PublicKey::from_secret_key(&secp, &processor_privkey);
-        keys::pubkey_to_hex(&pubkey)
-    };
+    let processor_pubkey = keys::pubkey_to_hex(&processor_privkey.public_key());
 
     info!("Processor pubkey: {}", processor_pubkey);
     info!("Starting processor worker, connecting to {}", relay_url);
@@ -56,6 +52,47 @@ async fn run_connection(
     let sink: Arc<WsSink> = Arc::new(Mutex::new(write));
 
     info!("Connected to relay");
+
+    // NIP-42 AUTH. relay.rs's owner-only read gate closes (and eventually
+    // IP-bans) anonymous REQ, so this must complete before we subscribe.
+    // The relay sends `["AUTH", challenge]` as the very first frame on
+    // every connection; a short timeout lets a relay that doesn't speak
+    // NIP-42 (e.g. some local dev setups) fall through and subscribe
+    // unauthenticated instead of hanging forever.
+    match tokio::time::timeout(Duration::from_secs(5), read.next()).await {
+        Ok(Some(Ok(Message::Text(text)))) => {
+            let parsed: serde_json::Value = serde_json::from_str(&text).unwrap_or_default();
+            if parsed.get(0).and_then(|v| v.as_str()) == Some("AUTH") {
+                if let Some(challenge) = parsed.get(1).and_then(|v| v.as_str()) {
+                    match send_auth(challenge, relay_url, processor_privkey, &sink).await {
+                        Ok(()) => {
+                            match tokio::time::timeout(Duration::from_secs(5), read.next()).await {
+                                Ok(Some(Ok(Message::Text(ok_text)))) => {
+                                    let ok: serde_json::Value =
+                                        serde_json::from_str(&ok_text).unwrap_or_default();
+                                    if ok.get(0).and_then(|v| v.as_str()) == Some("OK")
+                                        && ok.get(2).and_then(|v| v.as_bool()) == Some(true)
+                                    {
+                                        info!("NIP-42 AUTH accepted");
+                                    } else {
+                                        warn!("NIP-42 AUTH rejected: {}", ok_text);
+                                    }
+                                }
+                                _ => warn!("No OK confirmation for NIP-42 AUTH"),
+                            }
+                        }
+                        Err(e) => warn!("Failed to send NIP-42 AUTH: {}", e),
+                    }
+                }
+            } else {
+                debug!("First frame was not an AUTH challenge: {}", text);
+            }
+        }
+        Ok(Some(Ok(_))) => {}
+        Ok(Some(Err(e))) => return Err(e.into()),
+        Ok(None) => return Ok(()),
+        Err(_) => info!("No AUTH challenge within 5s; subscribing unauthenticated"),
+    }
 
     // Subscribe to events tagged with processor pubkey (last hour).
     // We retry older Failed submissions explicitly below rather than
@@ -85,6 +122,41 @@ async fn run_connection(
         }
     }
 
+    Ok(())
+}
+
+/// Sign and send a NIP-42 kind-22242 AUTH event responding to `challenge`,
+/// authenticating this connection as the processor's own pubkey. Required
+/// so `relay.rs`'s owner-only read gate treats the subsequent `REQ` as a
+/// local, authenticated read instead of closing it.
+async fn send_auth(
+    challenge: &str,
+    relay_url: &str,
+    processor_privkey: &SecretKey,
+    sink: &Arc<WsSink>,
+) -> anyhow::Result<()> {
+    let pubkey = processor_privkey.public_key();
+    let pubkey_hex = keys::pubkey_to_hex(&pubkey);
+    let created_at = chrono::Utc::now().timestamp();
+    let tags = serde_json::json!([["relay", relay_url], ["challenge", challenge]]);
+
+    let canonical = serde_json::json!([0, pubkey_hex, created_at, 22242, tags.clone(), ""]);
+    let id = event_id_hash(&canonical)?;
+    let sig = schnorr_sign(&id, processor_privkey)?;
+
+    let event = serde_json::json!({
+        "id": id,
+        "pubkey": pubkey_hex,
+        "created_at": created_at,
+        "kind": 22242,
+        "tags": tags,
+        "content": "",
+        "sig": sig
+    });
+
+    let msg = serde_json::json!(["AUTH", event]);
+    sink.lock().await.send(Message::Text(msg.to_string())).await?;
+    info!("Sent NIP-42 AUTH as {}", pubkey_hex);
     Ok(())
 }
 
