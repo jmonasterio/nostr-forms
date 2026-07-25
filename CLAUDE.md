@@ -41,10 +41,23 @@ is running on `forms.argw.com` is a different, newer implementation:
   `admin/slots`, and no source with those routes exists anywhere under
   `C:\github`.
 
-This Rust tree is a superseded earlier implementation. The source that
-actually builds `forms.argw.com` is **confirmed** not on this machine —
-searched all of `C:\github`, `C:\gitlab`, `C:\src`, and every branch of
-`origin`. Treat this repo as legacy.
+This Rust tree is a superseded earlier implementation — the retired droplet
+binary. It cannot compile to wasm at all (`mio` fails immediately on
+`wasm32-unknown-unknown`). Treat it as legacy.
+
+**The Worker source was RECOVERED on 2026-07-25 → `recovered-worker/`.**
+It lived at `cf-migration/src/nostr-form-rs/`, a sibling of `src/nostr-relay`,
+and was lost when the relay was extracted to `nostr-relay-rs`; `cf-migration`
+was never a git repo. It was rebuilt from `~/.omp` agent session transcripts
+(42 writes + 21 edits across 31 files, replayed chronologically). It compiles
+to wasm32, passes 40/40 tests, and `worker-build --release` produces a
+deployable bundle. Its `schema.rs` DDL matches the live D1 exactly, and its
+module set matches the deployed WASM's panic strings.
+
+**It is ~2 days behind the live deploy and is NOT byte-identical** (621 KB vs
+800 KB). `src/alerts.rs` is orphaned because `notify::publish_email_alert` was
+in a pruned edit. Read `recovered-worker/RECOVERY.md` for the per-file
+fidelity table and the safe staging procedure before deploying anything.
 
 **The live bundle was recovered on 2026-07-25** and lives at
 `deployed-worker-2026-06-16/` — `shim.js` plus a WASM that validates (152
