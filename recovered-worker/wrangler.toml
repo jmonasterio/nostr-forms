@@ -1,0 +1,36 @@
+name = "nostr-form-rs"
+main = "build/worker/shim.mjs"
+compatibility_date = "2025-01-01"
+
+[build]
+command = "worker-build --release"
+
+# In-account service binding to the relay Worker. Calls go through
+# `env.RELAY.fetch(...)` — no network hop, no auth ceremony beyond the
+# admin token, mirrors the original "form-rs subscribes to the relay" wiring.
+[[services]]
+binding = "RELAY"
+service = "nostr-relay"
+
+# D1: replaces argw's `forms.db`. Schema in `src/schema.rs::DDL_STATEMENTS`.
+# Create with `wrangler d1 create nostr-form-rs` then paste the id below.
+[[d1_databases]]
+binding = "FORMS"
+database_name = "nostr-form-rs"
+database_id = "REPLACE_WITH_OUTPUT_OF_wrangler_d1_create"
+
+[triggers]
+# Every minute. The poll handler walks since=last_seen to now.
+crons = ["* * * * *"]
+
+[vars]
+# Pubkey we tell the relay to filter on (mailbox recipient = us).
+PROCESSOR_PUBKEY = "REPLACE_WITH_PROCESSOR_X_ONLY_HEX"
+# Admin pubkey we notify when a submission lands.
+ADMIN_PUBKEY     = ""
+# PoW threshold for outbound DMs (matches relay default).
+DEFAULT_POW_BITS = "16"
+
+# Secrets — set via `wrangler secret put`:
+#   PROCESSOR_NSEC      — the processor's hex secret key (NIP-44 decryption + DM signing)
+#   ADMIN_INTERNAL_TOKEN — must match the relay Worker's ADMIN_INTERNAL_TOKEN

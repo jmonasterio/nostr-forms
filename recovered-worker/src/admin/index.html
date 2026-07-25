@@ -1,0 +1,296 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>nostr-form-rs · admin</title>
+<style>
+  :root {
+    color-scheme: light dark; --bd:#8884; --mut:#8889;
+    /* NostrLoginUI palette */
+    --nui-bg:#111118; --nui-card:#1c1c24; --nui-card-hover:#26262f;
+    --nui-primary:#6366f1; --nui-primary-hover:#4f46e5; --nui-text:#e4e4e7;
+    --nui-muted:#71717a; --nui-success:#22c55e; --nui-error:#ef4444; --nui-border:#27272a;
+  }
+  * { box-sizing: border-box; }
+  body { font: 15px/1.5 system-ui, sans-serif; margin: 0; padding: 1.2rem; max-width: 980px; }
+  h1 { font-size: 1.25rem; margin: 0 0 .2rem; }
+  .sub { color: var(--mut); margin: 0 0 1rem; font-size: .85rem; word-break: break-all; }
+  button { font: inherit; padding: .35rem .7rem; border: 1px solid var(--bd); border-radius: 6px; background: transparent; cursor: pointer; }
+  button.primary { border-color: #2a7; }
+  nav { display: flex; gap: .5rem; margin: .8rem 0; align-items: center; flex-wrap: wrap; }
+  nav button.active { background: #2a72; }
+  table { border-collapse: collapse; width: 100%; font-size: .85rem; }
+  th, td { border: 1px solid var(--bd); padding: .35rem .5rem; text-align: left; vertical-align: top; }
+  th { background: #8881; }
+  input, select { font: inherit; padding: .3rem .4rem; border: 1px solid var(--bd); border-radius: 5px; background: transparent; width: 100%; }
+  label { display: block; font-size: .8rem; color: var(--mut); margin-bottom: .15rem; }
+  .row { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: .6rem; margin-bottom: .6rem; }
+  .card { border: 1px solid var(--bd); border-radius: 8px; padding: 1rem; margin: .8rem 0; }
+  .muted { color: var(--mut); } .err { color: #c44; } .ok { color: #2a7; }
+  pre { white-space: pre-wrap; word-break: break-word; margin: 0; font-size: .82rem; }
+  code { font-size: .82rem; word-break: break-all; }
+  .hidden { display: none; }
+  .pill { font-size: .72rem; padding: .05rem .4rem; border-radius: 10px; border: 1px solid var(--bd); }
+  #loginCard { max-width: 420px; }
+</style>
+</head>
+<body>
+<h1>nostr-form-rs · admin</h1>
+<p class="sub">processor <code id="procpk">…</code></p>
+
+<div id="signin">
+  <p class="sub">Sign in with your Nostr key (extension, remote signer / bunker, or key).
+  Submissions are decrypted locally with your key; nothing secret is stored in the browser.</p>
+  <div id="loginCard"></div>
+</div>
+
+<div id="app" class="hidden">
+  <p class="sub">signed in as <code id="me"></code> <span id="adminBadge" class="pill"></span>
+    <button id="logoutBtn" style="margin-left:.5rem">logout</button></p>
+  <nav>
+    <button data-tab="forms" class="active">Forms</button>
+    <button data-tab="subs">Submissions</button>
+    <button data-tab="slots">Booking</button>
+    <button id="pollBtn">Poll now</button>
+    <span id="msg" class="muted"></span>
+  </nav>
+
+  <section id="tab-forms">
+    <div class="card">
+      <strong id="formTitle">New form</strong>
+      <div class="row" style="margin-top:.6rem">
+        <div><label>slug (form_id)</label><input id="f_slug" placeholder="contact"></div>
+        <div><label>name</label><input id="f_name" placeholder="Contact form"></div>
+        <div><label>notify_pubkey (hex)</label><input id="f_notify"></div>
+        <div><label>pow_difficulty</label><input id="f_pow" type="number" value="16"></div>
+        <div><label>rate_limit_per_hour</label><input id="f_rate" type="number" value="100"></div>
+        <div><label>delivery_mode</label><select id="f_mode"><option value="full">full</option><option value="notify">notify</option></select></div>
+        <div><label>status</label><select id="f_status"><option value="active">active</option><option value="disabled">disabled</option></select></div>
+      </div>
+      <div style="margin-bottom:.6rem"><label>options_json (booking rules live under the "booking" key)</label>
+        <textarea id="f_options" rows="4" style="font: .82rem/1.4 ui-monospace, monospace; width:100%; padding:.3rem .4rem; border:1px solid var(--bd); border-radius:5px; background:transparent">{}</textarea></div>
+      <button class="primary" id="saveForm">Save form</button>
+      <button id="clearForm">Clear</button>
+    </div>
+    <table><thead><tr><th>slug</th><th>name</th><th>notify</th><th>pow</th><th>rate</th><th>mode</th><th>status</th><th></th></tr></thead>
+    <tbody id="formsBody"></tbody></table>
+  </section>
+
+  <section id="tab-subs" class="hidden">
+    <div class="row">
+      <div><label>filter by form slug (blank = all)</label><input id="s_form"></div>
+      <div><label>limit</label><input id="s_limit" type="number" value="100"></div>
+      <div style="align-self:end"><button id="loadSubs">Load</button></div>
+    </div>
+    <table><thead><tr><th>received</th><th>form</th><th>from</th><th>status</th><th>content</th></tr></thead>
+    <tbody id="subsBody"></tbody></table>
+  </section>
+
+  <section id="tab-slots" class="hidden">
+    <div class="row">
+      <div><label>filter by form slug (blank = all)</label><input id="sl_form"></div>
+      <div><label>limit</label><input id="sl_limit" type="number" value="100"></div>
+      <div style="align-self:end"><button id="loadSlots">Load</button></div>
+    </div>
+    <table><thead><tr><th>starts (local)</th><th>form</th><th>min</th><th>status</th><th>slot id</th><th></th></tr></thead>
+    <tbody id="slotsBody"></tbody></table>
+    <p class="muted" style="font-size:.8rem">Cancel frees the slot (it becomes bookable again).
+    Notifying the visitor is manual — their contact details are in the matching submission.</p>
+  </section>
+</div>
+
+<script type="module">
+import { NostrAuth, NostrLoginUI } from '/admin/nostr-universal.js';
+
+const $ = (id) => document.getElementById(id);
+let CFG = { processor_pubkey: "", admins: [] };
+let ME = "";
+
+const auth = new NostrAuth({
+  relays: ['wss://relay.nsec.app', 'wss://relay.damus.io', 'wss://nos.lol'],
+  allowLocalDev: true,
+  storageKey: 'nostr_form_admin',
+});
+
+function setMsg(el, text, cls) { el.textContent = text; el.className = cls || "muted"; }
+function esc(s) { return String(s).replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c])); }
+
+async function sha256hex(str) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(str));
+  return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, "0")).join("");
+}
+
+// NIP-98 Authorization header, signed via the active nostr-universal signer.
+async function nip98(method, url, body) {
+  const tags = [["u", url], ["method", method]];
+  if (body && body.length) tags.push(["payload", await sha256hex(body)]);
+  const signed = await auth.sign({ kind: 27235, created_at: Math.floor(Date.now() / 1000), tags, content: "" });
+  return "Nostr " + btoa(JSON.stringify(signed));
+}
+
+async function api(method, path, bodyObj) {
+  const url = new URL(path, location.origin).toString();
+  const body = bodyObj === undefined ? "" : JSON.stringify(bodyObj);
+  const headers = { Authorization: await nip98(method, url, body) };
+  if (body) headers["Content-Type"] = "application/json";
+  const res = await fetch(url, { method, headers, body: body || undefined });
+  const text = await res.text();
+  if (!res.ok) throw new Error(`${res.status}: ${text}`);
+  try { return JSON.parse(text); } catch { return text; }
+}
+
+async function loadConfig() {
+  CFG = await (await fetch("/admin/config")).json();
+  $("procpk").textContent = CFG.processor_pubkey || "(unset)";
+}
+
+function onConnected(pubkey) {
+  ME = pubkey;
+  $("me").textContent = ME;
+  const isAdmin = CFG.admins.includes(ME);
+  $("adminBadge").textContent = isAdmin ? "admin" : "NOT in admin set";
+  $("adminBadge").className = "pill " + (isAdmin ? "ok" : "err");
+  $("signin").classList.add("hidden");
+  $("app").classList.remove("hidden");
+  loadForms();
+}
+
+function fillForm(f) {
+  $("formTitle").textContent = f ? `Edit ${f.slug}` : "New form";
+  $("f_slug").value = f ? f.slug : "";
+  $("f_slug").readOnly = !!f;
+  $("f_name").value = f ? f.name : "";
+  $("f_notify").value = f ? f.notify_pubkey : "";
+  $("f_pow").value = f ? f.pow_difficulty : 16;
+  $("f_rate").value = f ? f.rate_limit_per_hour : 100;
+  $("f_mode").value = f ? f.delivery_mode : "full";
+  $("f_status").value = f ? f.status : "active";
+  $("f_options").value = f ? f.options_json : "{}";
+}
+
+async function loadForms() {
+  try {
+    const forms = await api("GET", "/admin/forms");
+    const tb = $("formsBody"); tb.innerHTML = "";
+    for (const f of forms) {
+      const tr = document.createElement("tr");
+      tr.innerHTML = `<td>${esc(f.slug)}</td><td>${esc(f.name)}</td>
+        <td><code>${esc(f.notify_pubkey.slice(0,12))}…</code></td>
+        <td>${f.pow_difficulty}</td><td>${f.rate_limit_per_hour}</td>
+        <td>${esc(f.delivery_mode)}</td><td>${esc(f.status)}</td>
+        <td><button data-edit>edit</button> <button data-del>del</button></td>`;
+      tr.querySelector("[data-edit]").onclick = () => fillForm(f);
+      tr.querySelector("[data-del]").onclick = () => delForm(f.slug);
+      tb.appendChild(tr);
+    }
+    setMsg($("msg"), `${forms.length} form(s)`);
+  } catch (e) { setMsg($("msg"), e.message, "err"); }
+}
+
+async function saveForm() {
+  const payload = {
+    slug: $("f_slug").value.trim(),
+    name: $("f_name").value.trim(),
+    notify_pubkey: $("f_notify").value.trim(),
+    pow_difficulty: Number($("f_pow").value),
+    rate_limit_per_hour: Number($("f_rate").value),
+    delivery_mode: $("f_mode").value,
+    status: $("f_status").value,
+  };
+  const opts = $("f_options").value.trim() || "{}";
+  try { JSON.parse(opts); } catch { setMsg($("msg"), "options_json is not valid JSON", "err"); return; }
+  payload.options_json = opts;
+  try { await api("POST", "/admin/forms", payload); setMsg($("msg"), "saved", "ok"); fillForm(null); loadForms(); }
+  catch (e) { setMsg($("msg"), e.message, "err"); }
+}
+
+async function delForm(slug) {
+  if (!confirm(`Delete form ${slug}?`)) return;
+  try { await api("DELETE", "/admin/forms/" + encodeURIComponent(slug)); loadForms(); }
+  catch (e) { setMsg($("msg"), e.message, "err"); }
+}
+
+async function loadSubs() {
+  const slug = $("s_form").value.trim();
+  const limit = Number($("s_limit").value) || 100;
+  const path = "/admin/submissions?limit=" + limit + (slug ? "&form=" + encodeURIComponent(slug) : "");
+  try {
+    const rows = await api("GET", path);
+    const tb = $("subsBody"); tb.innerHTML = "";
+    for (const r of rows) {
+      const tr = document.createElement("tr");
+      const when = new Date(r.received_at * 1000).toISOString().replace("T", " ").slice(0, 19);
+      tr.innerHTML = `<td>${when}</td><td>${esc(r.form_slug)}</td>
+        <td><code>${esc(r.submitter_pubkey.slice(0,12))}…</code></td>
+        <td>${esc(r.delivery_status)}</td><td><pre>decrypting…</pre></td>`;
+      const cell = tr.querySelector("pre");
+      decryptSealed(r.sealed_json).then(pt => cell.textContent = pt)
+        .catch(e => { cell.textContent = "decrypt failed: " + e.message; cell.className = "err"; });
+      tb.appendChild(tr);
+    }
+    setMsg($("msg"), `${rows.length} submission(s)`);
+  } catch (e) { setMsg($("msg"), e.message, "err"); }
+
+async function loadSlots() {
+  const slug = $("sl_form").value.trim();
+  const limit = Number($("sl_limit").value) || 100;
+  const path = "/admin/slots?limit=" + limit + (slug ? "&form=" + encodeURIComponent(slug) : "");
+  try {
+    const rows = await api("GET", path);
+    const tb = $("slotsBody"); tb.innerHTML = "";
+    for (const r of rows) {
+      const tr = document.createElement("tr");
+      const when = new Date(r.starts_at * 1000).toLocaleString();
+      tr.innerHTML = `<td>${esc(when)}</td><td>${esc(r.form_slug)}</td>
+        <td>${r.duration_min}</td><td>${esc(r.status)}</td>
+        <td><code>${esc(r.slot_id)}</code></td>
+        <td><button data-cancel>cancel</button></td>`;
+      tr.querySelector("[data-cancel]").onclick = () => cancelSlot(r.slot_id);
+      tb.appendChild(tr);
+    }
+    setMsg($("msg"), `${rows.length} booked slot(s)`, "ok");
+  } catch (e) { setMsg($("msg"), e.message, "err"); }
+}
+
+async function cancelSlot(id) {
+  if (!confirm(`Cancel booking ${id}? The slot becomes bookable again.`)) return;
+  try { await api("DELETE", "/admin/slots/" + encodeURIComponent(id)); loadSlots(); }
+  catch (e) { setMsg($("msg"), e.message, "err"); }
+}
+}
+let subsLoaded = false, slotsLoaded = false;
+document.querySelectorAll("nav [data-tab]").forEach(b => b.onclick = () => {
+  document.querySelectorAll("nav [data-tab]").forEach(x => x.classList.toggle("active", x === b));
+  $("tab-forms").classList.toggle("hidden", b.dataset.tab !== "forms");
+  $("tab-subs").classList.toggle("hidden", b.dataset.tab !== "subs");
+  $("tab-slots").classList.toggle("hidden", b.dataset.tab !== "slots");
+  if (b.dataset.tab === "subs" && !subsLoaded) { subsLoaded = true; loadSubs(); }
+  if (b.dataset.tab === "slots" && !slotsLoaded) { slotsLoaded = true; loadSlots(); }
+});
+
+document.querySelectorAll("nav [data-tab]").forEach(b => b.onclick = () => {
+  document.querySelectorAll("nav [data-tab]").forEach(x => x.classList.toggle("active", x === b));
+$("loadSlots").onclick = loadSlots;
+  $("tab-forms").classList.toggle("hidden", b.dataset.tab !== "forms");
+  $("tab-subs").classList.toggle("hidden", b.dataset.tab !== "subs");
+});
+$("saveForm").onclick = saveForm;
+$("clearForm").onclick = () => fillForm(null);
+$("loadSubs").onclick = loadSubs;
+$("pollBtn").onclick = async () => { try { setMsg($("msg"), "polling…"); await api("POST", "/admin/poll-now"); setMsg($("msg"), "polled", "ok"); } catch (e) { setMsg($("msg"), e.message, "err"); } };
+$("logoutBtn").onclick = () => { auth.logoutAll(); location.reload(); };
+
+(async () => {
+  await loadConfig();
+  const loginUI = new NostrLoginUI($("loginCard"), auth, {
+    appName: "nostr-form-rs admin",
+    onConnected: (pubkey) => onConnected(pubkey),
+    onDisconnect: () => { $("app").classList.add("hidden"); $("signin").classList.remove("hidden"); },
+    onError: (err) => console.error("login error:", err),
+  });
+  loginUI.start();
+})();
+</script>
+</body>
+</html>
