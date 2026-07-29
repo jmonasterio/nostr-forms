@@ -7,7 +7,16 @@
 //! 2. Read `cursor`; POST the poll filter to the relay (service binding).
 //! 3. For each event: dedupe → decrypt → resolve form (active?) → PoW →
 //!    rate-limit → seal → insert → deliver → update status.
-//! 4. Advance `cursor` to max(created_at) seen.
+//! 4. Advance `cursor` to (poll start time - small overlap) — NOT
+//!    max(created_at) seen. `created_at` on a kind 1059 gift wrap is
+//!    randomised by the sender (NIP-59, up to ~46.8h backdated per
+//!    ../../nostr-relay-rs AGENTS.md) and is not the order the relay
+//!    admits by `since`/`until`. Using it as the cursor could freeze the
+//!    cursor near-permanently on a quiet processor: every tick then re-asks
+//!    the relay for the whole (frozen-cursor .. now) window, which only
+//!    grows, forever, and the relay pays that in `rows_read` even though it
+//!    returns ~nothing new — this is what exhausted the relay DO's daily
+//!    `rows_read` free-tier cap on 2026-07-27 and 2026-07-28.
 
 use worker::*;
 
@@ -16,6 +25,13 @@ use crate::event::Event;
 use crate::notify;
 use crate::pow;
 use crate::storage;
+
+/// Safety margin subtracted from the poll's own wall-clock time before it
+/// is written back as the cursor, covering clock drift between this
+/// Worker's `Date::now()` and the relay DO's. Not a hedge against event
+/// backdating — the relay's `since` filters its own arrival time, which a
+/// sender's `created_at` cannot affect.
+const CURSOR_OVERLAP_SECS: i64 = 10;
 
 /// Result of the booking claim for a submission carrying `slot_id`.
 enum BookingOutcome {
@@ -88,13 +104,12 @@ pub async fn run_once(env: &Env) -> Result<()> {
     let body = resp.text().await?;
     let events: Vec<Event> = serde_json::from_str(&body)
         .map_err(|e| Error::RustError(format!("poll: parse events: {e}")))?;
-    console_log!("poll: fetched {} events", events.len());
+    let events_len = events.len();
+    console_log!("poll: fetched {events_len} events");
 
-    let mut max_created_at = cursor;
     let (mut inserted, mut skipped, mut rejected, mut delivered) = (0u64, 0u64, 0u64, 0u64);
 
     for event in events {
-        max_created_at = max_created_at.max(event.created_at as i64);
         if storage::has_submission(&db, &event.id).await? {
             skipped += 1;
             continue;
@@ -232,9 +247,15 @@ pub async fn run_once(env: &Env) -> Result<()> {
         }
     }
 
-    storage::set_cursor(&db, max_created_at, now_secs).await?;
+    // Advance to wall-clock, not `max(event.created_at)` — see module doc.
+    // `CURSOR_OVERLAP_SECS` covers clock drift between this Worker and the
+    // relay DO's `Date::now()`, not event backdating: `since` filters on
+    // the relay's own arrival time, which is unaffected by a sender's
+    // randomised `created_at`.
+    let next_cursor = now_secs - CURSOR_OVERLAP_SECS;
+    storage::set_cursor(&db, next_cursor, now_secs).await?;
     console_log!(
-        "poll: cursor={max_created_at} inserted={inserted} delivered={delivered} skipped={skipped} rejected={rejected}"
+        "poll: cursor={next_cursor} fetched={events_len} inserted={inserted} delivered={delivered} skipped={skipped} rejected={rejected}"
     );
     Ok(())
 }
