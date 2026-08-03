@@ -881,7 +881,7 @@ function createNip98Event(url, method) {
  * @param {string} method    - HTTP method
  * @param {string} [body]    - Request body string (for payload tag)
  * @param {object} [options]
- * @param {number} [options.timeout=10000] - Sign timeout in ms; protects against NIP-07 hangs on HTTP
+ * @param {number} [options.timeout=60000] - Sign timeout in ms; protects against NIP-07 hangs on HTTP
  * @returns {Promise<{header: string, event: object}>} The Authorization header and signed event
  */
 async function signNip98(signer, url, method, body, options = {}) {
@@ -1034,7 +1034,14 @@ class RelayPool {
         _safeCloseWs(relay.ws);
         this.relays.delete(url);
         this.failedRelays.set(url, Date.now());
-        reject(new Error(`Connection timeout: ${url}`));
+        const err = new Error(`Connection timeout: ${url}`);
+        reject(err);
+        // Drain queued waiters too — _safeCloseWs detaches the ws handlers,
+        // so onopen/onerror can no longer settle them. Without this, callers
+        // parked on a concurrent dial to the same relay (and the publish()
+        // awaiting them) hang forever. Matches the onerror path below.
+        relay.queue.forEach(q => q.reject(err));
+        relay.queue = [];
       }, this.connectionTimeout);
 
       relay.ws.onopen = () => {
@@ -1112,6 +1119,15 @@ class RelayPool {
     }
   }
 
+  /**
+   * Broadcast a signed event to every relay in `urls` and resolve a summary.
+   * Never rejects (uses allSettled). A relay counts as `accepted` only on an
+   * explicit OK-true; a rejected dial/send/relay-rejection counts as `failed`;
+   * the ~2s no-confirmation fallback (sent but unacknowledged) is neither and
+   * flips `unconfirmed`.
+   * @returns {Promise<{ok:boolean, accepted:number, failed:number, unconfirmed:boolean}>}
+   *   `ok` is `accepted > 0`.
+   */
   async publish(urls, event) {
     const results = await Promise.allSettled(
       urls.map(async url => {
@@ -1146,7 +1162,16 @@ class RelayPool {
         });
       })
     );
-    return results;
+    let accepted = 0, failed = 0, unconfirmed = 0;
+    for (const r of results) {
+      if (r.status === 'fulfilled') {
+        if (r.value && r.value.unconfirmed) unconfirmed++;
+        else accepted++;
+      } else {
+        failed++;
+      }
+    }
+    return { ok: accepted > 0, accepted, failed, unconfirmed: unconfirmed > 0 };
   }
 
   /**
@@ -1971,7 +1996,13 @@ class Nip46Signer extends BaseSigner {
  */
 class NostrAuth {
   constructor(options = {}) {
-    this.relays = options.relays || ['wss://relay.nsec.app', 'wss://relay.damus.io', 'wss://nos.lol'];
+    // Default relay set. Deliberately ONE relay we own: a third-party signer
+    // relay is a single point of failure for every NIP-46 sign_event, and an
+    // app that forgets to pass `relays` silently inherits that dependency.
+    // relay.nsec.app returned 502 on 2026-08-02 and a consumer app stalled at
+    // boot with "Signer did not respond to sign_event" — the app had never
+    // set `relays`, so it had no idea it depended on someone else's uptime.
+    this.relays = options.relays || ['wss://relay.argw.com'];
     this.timeout = options.timeout || 60000;
     this.allowLocalDev = options.allowLocalDev || false;
     this.allowGuestMode = options.allowGuestMode || false;
