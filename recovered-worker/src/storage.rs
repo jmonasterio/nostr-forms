@@ -51,6 +51,70 @@ pub async fn set_cursor(db: &D1Database, value: i64, now_secs: i64) -> Result<()
     Ok(())
 }
 
+/// Names of the adaptive-poll counters, kept in the SAME `cursors` table as
+/// `envelope_since`. Deliberately no new table and no migration: `cursors`
+/// is `(name TEXT PRIMARY KEY, value INTEGER, updated_at INTEGER)` and the
+/// DDL is already known to match the live D1 schema exactly, so this state
+/// exists the moment the code runs. A row that is absent reads as 0, which
+/// means "poll now, streak zero" — i.e. the first run after a deploy
+/// behaves exactly like the fixed-cadence build it replaced.
+const POLL_NEXT_AT_NAME: &str = "poll_next_at";
+const POLL_IDLE_NAME: &str = "poll_idle_streak";
+
+/// The adaptive poll's persisted schedule.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct PollGate {
+    /// Earliest unix time the next relay fetch may happen.
+    pub next_at: i64,
+    /// Consecutive polls that came back with no events.
+    pub idle_streak: i64,
+}
+
+#[derive(Debug, Deserialize)]
+struct NamedCursorRow {
+    name: String,
+    value: i64,
+}
+
+/// Both counters in ONE query. Two SELECTs would be two D1 round trips on
+/// every cron tick including the ones this whole mechanism exists to make
+/// cheap.
+pub async fn get_poll_gate(db: &D1Database) -> Result<PollGate> {
+    let res = db
+        .prepare("SELECT name, value FROM cursors WHERE name IN (?1, ?2)")
+        .bind(&[POLL_NEXT_AT_NAME.into(), POLL_IDLE_NAME.into()])?
+        .all()
+        .await?;
+    let mut gate = PollGate { next_at: 0, idle_streak: 0 };
+    for row in res.results::<NamedCursorRow>()? {
+        if row.name == POLL_NEXT_AT_NAME {
+            gate.next_at = row.value;
+        } else if row.name == POLL_IDLE_NAME {
+            gate.idle_streak = row.value;
+        }
+    }
+    Ok(gate)
+}
+
+pub async fn set_poll_gate(db: &D1Database, gate: PollGate, now_secs: i64) -> Result<()> {
+    const UPSERT: &str = "INSERT INTO cursors(name, value, updated_at) VALUES (?1, ?2, ?3) \
+         ON CONFLICT(name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at";
+    db.batch(vec![
+        db.prepare(UPSERT).bind(&[
+            POLL_NEXT_AT_NAME.into(),
+            (gate.next_at as f64).into(),
+            (now_secs as f64).into(),
+        ])?,
+        db.prepare(UPSERT).bind(&[
+            POLL_IDLE_NAME.into(),
+            (gate.idle_streak as f64).into(),
+            (now_secs as f64).into(),
+        ])?,
+    ])
+    .await?;
+    Ok(())
+}
+
 // ---------- forms registry ----------
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

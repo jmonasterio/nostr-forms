@@ -26,12 +26,8 @@ use crate::notify;
 use crate::pow;
 use crate::storage;
 
-/// Safety margin subtracted from the poll's own wall-clock time before it
-/// is written back as the cursor, covering clock drift between this
-/// Worker's `Date::now()` and the relay DO's. Not a hedge against event
-/// backdating — the relay's `since` filters its own arrival time, which a
-/// sender's `created_at` cannot affect.
-const CURSOR_OVERLAP_SECS: i64 = 10;
+use crate::poll_schedule::{poll_interval_secs, CURSOR_OVERLAP_SECS, POLL_FLOOR_SECS};
+
 
 /// Result of the booking claim for a submission carrying `slot_id`.
 enum BookingOutcome {
@@ -40,9 +36,30 @@ enum BookingOutcome {
     Invalid { slot: String },
 }
 
-pub async fn run_once(env: &Env) -> Result<()> {
+/// One poll pass.
+///
+/// `force` bypasses the idle gate and is for `/admin/poll-now` only — a
+/// human clicking that button is asking for a fetch NOW, and answering
+/// "not yet, come back in four minutes" would make the one manual control
+/// over this Worker useless exactly when someone is using it to check
+/// whether the pipeline works. The cron passes `false`.
+pub async fn run_once(env: &Env, force: bool) -> Result<()> {
     let db = env.d1("FORMS")?;
     storage::ensure_schema(&db).await?;
+
+    let now_secs: i64 = (Date::now().as_millis() / 1000) as i64;
+    let mut gate = storage::get_poll_gate(&db).await?;
+    if !force && now_secs < gate.next_at {
+        // The whole point. No relay fetch, so no Durable Object request and
+        // no Worker request on the relay side either — the tick costs this
+        // Worker one D1 read and nothing at all downstream.
+        console_log!(
+            "poll: idle (streak {}), next fetch in {}s",
+            gate.idle_streak,
+            gate.next_at - now_secs
+        );
+        return Ok(());
+    }
 
     let processor_pubkey = env
         .var("PROCESSOR_PUBKEY")
@@ -74,36 +91,31 @@ pub async fn run_once(env: &Env) -> Result<()> {
         Err(_) => return Err(Error::RustError("ADMIN_INTERNAL_TOKEN not set".into())),
     };
 
-    let now_secs: i64 = (Date::now().as_millis() / 1000) as i64;
 
     // 1) Retry pending deliveries (metadata-only; full content stays in the
     //    dashboard since it is sealed to the admin, not the processor).
-    retry_pending(env, &db, &processor_sk_bytes, &processor_pubkey, now_secs).await;
+    //    Rows here mean a delivery is mid-flight, which is activity in its
+    //    own right — a pipeline still working through a backlog must not be
+    //    allowed to relax underneath itself.
+    let pending = retry_pending(env, &db, &processor_sk_bytes, &processor_pubkey, now_secs).await;
 
-    // 2) Pull from the relay.
-    let cursor = storage::get_cursor(&db).await?;
-    let filter = storage::build_poll_filter(&processor_pubkey, cursor);
-    let relay = env.service("RELAY")?;
-    let headers = Headers::new();
-    headers.set("Content-Type", "application/json")?;
-    headers.set("X-Admin-Token", &admin_token)?;
-    let req = Request::new_with_init(
-        "https://relay.internal/admin/poll",
-        RequestInit::new()
-            .with_method(Method::Post)
-            .with_headers(headers)
-            .with_body(Some(filter.to_string().into())),
-    )?;
-    let mut resp = relay.fetch_request(req).await?;
-    if resp.status_code() != 200 {
-        return Err(Error::RustError(format!(
-            "relay /admin/poll returned {}",
-            resp.status_code()
-        )));
-    }
-    let body = resp.text().await?;
-    let events: Vec<Event> = serde_json::from_str(&body)
-        .map_err(|e| Error::RustError(format!("poll: parse events: {e}")))?;
+    // 2) Pull from the relay. This is the only part of the tick that costs
+    //    the relay anything, and the only part the gate above skips.
+    let events: Vec<Event> =
+        match fetch_envelopes(env, &db, &processor_pubkey, &admin_token).await {
+            Ok(evs) => evs,
+            Err(e) => {
+                // A failed fetch is not evidence of an idle mailbox — we
+                // learned nothing about what the relay is holding. Widening
+                // on it would turn a transient relay fault into minutes of
+                // extra latency after the fault cleared. Re-arm at the floor
+                // and try again next tick.
+                gate.idle_streak = 0;
+                gate.next_at = now_secs + POLL_FLOOR_SECS;
+                let _ = storage::set_poll_gate(&db, gate, now_secs).await;
+                return Err(e);
+            }
+        };
     let events_len = events.len();
     console_log!("poll: fetched {events_len} events");
 
@@ -252,29 +264,87 @@ pub async fn run_once(env: &Env) -> Result<()> {
     // relay DO's `Date::now()`, not event backdating: `since` filters on
     // the relay's own arrival time, which is unaffected by a sender's
     // randomised `created_at`.
+    //
+    // The cursor now also carries the gate's skipped time: it advances only
+    // on a tick that actually fetched, so the next window spans the whole
+    // idle stretch. That is why POLL_CEILING_SECS has to stay well under
+    // the relay's 15-minute `since` clamp.
     let next_cursor = now_secs - CURSOR_OVERLAP_SECS;
     storage::set_cursor(&db, next_cursor, now_secs).await?;
+
+    // Anything the relay handed us, and any delivery still in flight, is
+    // activity: back to the floor. A poll that came back with nothing, and
+    // found nothing waiting, is the only answer that widens the interval.
+    gate.idle_streak = if events_len > 0 || pending > 0 {
+        0
+    } else {
+        gate.idle_streak.saturating_add(1)
+    };
+    let interval = poll_interval_secs(gate.idle_streak);
+    gate.next_at = now_secs + interval;
+    storage::set_poll_gate(&db, gate, now_secs).await?;
+
     console_log!(
-        "poll: cursor={next_cursor} fetched={events_len} inserted={inserted} delivered={delivered} skipped={skipped} rejected={rejected}"
+        "poll: cursor={next_cursor} fetched={events_len} inserted={inserted} delivered={delivered} skipped={skipped} rejected={rejected} next_in={interval}s streak={}",
+        gate.idle_streak
     );
     Ok(())
 }
 
+/// POST the poll filter to the relay over the service binding and parse the
+/// envelopes back. Split out of `run_once` so its failure has one place to
+/// be handled: this is the single call that costs the relay a Durable
+/// Object request, and the gate's whole job is deciding whether to make it.
+async fn fetch_envelopes(
+    env: &Env,
+    db: &D1Database,
+    processor_pubkey: &str,
+    admin_token: &str,
+) -> Result<Vec<Event>> {
+    let cursor = storage::get_cursor(db).await?;
+    let filter = storage::build_poll_filter(processor_pubkey, cursor);
+    let relay = env.service("RELAY")?;
+    let headers = Headers::new();
+    headers.set("Content-Type", "application/json")?;
+    headers.set("X-Admin-Token", admin_token)?;
+    let req = Request::new_with_init(
+        "https://relay.internal/admin/poll",
+        RequestInit::new()
+            .with_method(Method::Post)
+            .with_headers(headers)
+            .with_body(Some(filter.to_string().into())),
+    )?;
+    let mut resp = relay.fetch_request(req).await?;
+    if resp.status_code() != 200 {
+        return Err(Error::RustError(format!(
+            "relay /admin/poll returned {}",
+            resp.status_code()
+        )));
+    }
+    let body = resp.text().await?;
+    serde_json::from_str(&body).map_err(|e| Error::RustError(format!("poll: parse events: {e}")))
+}
+
 /// Best-effort metadata-only redelivery of pending submissions.
+///
+/// Returns how many rows were still pending, which the caller treats as
+/// activity: a backlog being worked through is a live pipeline, and it must
+/// not be allowed to relax its own poll cadence out from under itself.
 async fn retry_pending(
     env: &Env,
     db: &D1Database,
     processor_sk_bytes: &[u8; 32],
     processor_pubkey: &str,
     now: i64,
-) {
+) -> usize {
     let pending = match storage::pending_submissions(db, 20).await {
         Ok(p) => p,
         Err(e) => {
             console_log!("poll: pending query failed: {e:?}");
-            return;
+            return 0;
         }
     };
+    let found = pending.len();
     for row in pending {
         let form = match storage::get_form(db, &row.form_slug).await {
             Ok(Some(f)) => f,
@@ -288,6 +358,7 @@ async fn retry_pending(
             let _ = storage::set_delivery(db, &row.event_id, "delivered", true).await;
         }
     }
+    found
 }
 
 

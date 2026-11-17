@@ -58,7 +58,8 @@ pub async fn handle(mut req: Request, env: Env) -> Result<Response> {
     // ---- authenticated routes ----
     match (method.clone(), path.as_str()) {
         (Method::Post, "/admin/poll-now") => {
-            poll::run_once(&env).await?;
+            // `force`: a human asking for a poll gets one, gate or no gate.
+            poll::run_once(&env, true).await?;
             Response::ok("polled")
         }
         (Method::Get, "/admin/forms") => {

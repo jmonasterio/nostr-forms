@@ -13,6 +13,7 @@ pub mod alerts;
 pub mod booking;
 pub mod decrypt;
 pub mod form_id;
+pub mod poll_schedule;
 pub mod schema;
 
 #[cfg(target_arch = "wasm32")]
@@ -60,7 +61,10 @@ mod worker_entry {
 
     #[event(scheduled)]
     async fn scheduled(_event: ScheduledEvent, env: Env, _ctx: ScheduleContext) {
-        if let Err(e) = crate::poll::run_once(&env).await {
+        // Not forced: the cron ticks every minute, and the adaptive gate in
+        // `run_once` decides which of those ticks actually costs the relay
+        // a request. See `poll::poll_interval_secs`.
+        if let Err(e) = crate::poll::run_once(&env, false).await {
             console_log!("poll cron failed: {e:?}");
         }
     }
