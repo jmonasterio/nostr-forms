@@ -17,7 +17,7 @@ const IP_LIMIT_PER_HOUR: i64 = 20;
 /// slug (slugs are 8 base62 chars), so it cannot collide with a form's rows.
 const IP_LIMIT_SLUG: &str = "_submit_ip";
 
-pub async fn handle(mut req: Request, env: Env) -> Result<Response> {
+pub async fn handle(mut req: Request, env: Env, ctx: Context) -> Result<Response> {
     let origin = req.headers().get("Origin")?.unwrap_or_default();
     let allowed = allowed_origin(&env, &origin);
 
@@ -36,16 +36,26 @@ pub async fn handle(mut req: Request, env: Env) -> Result<Response> {
     let resp = match submit::parse_and_check(&body, &keys.processor_pubkey, now_secs as u64) {
         Err(r) => reject(r.reason(), if r == Reject::TooLarge { 413 } else { 400 }),
         Ok(event) => {
+            // No `ensure_schema` here: it is 8 DDL round trips, and the tables
+            // exist (the admin routes still run it).
             let db = env.d1("FORMS")?;
-            storage::ensure_schema(&db).await?;
             if !ip.is_empty()
                 && !storage::rate_limit_check_and_inc(&db, IP_LIMIT_SLUG, &ip, now_secs, IP_LIMIT_PER_HOUR).await?
             {
                 reject("rate-limited", 429)
             } else {
-                match process::process_event(&env, &db, &keys, &event, now_secs).await? {
+                match process::process_event(&db, &keys, &event, now_secs).await? {
                     Outcome::Duplicate => ok(&event.id, true),
-                    Outcome::Stored { .. } => ok(&event.id, false),
+                    Outcome::Stored(delivery) => {
+                        // Answer the browser now; the DM (via the relay) and
+                        // the owner email run after the response is sent.
+                        let env = env.clone();
+                        let keys = keys.clone();
+                        ctx.wait_until(async move {
+                            process::deliver(&env, &keys, delivery, now_secs).await;
+                        });
+                        ok(&event.id, false)
+                    }
                     Outcome::Rejected("rate-limited") => reject("rate-limited", 429),
                     Outcome::Rejected(reason) => reject(reason, 422),
                 }

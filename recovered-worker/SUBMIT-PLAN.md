@@ -20,7 +20,13 @@ Differences from the plan below:
 - The owner email is now sent whether or not the DM succeeded (before, a DM
   failure suppressed it). Failed DMs stay `pending`; `/admin/poll-now` became
   `POST /admin/retry-pending` ("Retry pending DMs" in the dashboard).
-- Alert delivery is synchronous in the `/submit` request (no `wait_until`).
+- `/submit` answers once the row is stored; the DM and owner email run after
+  the response under `ctx.wait_until` (`process::deliver`). It also skips
+  `ensure_schema` (8 DDL round trips). Staging: ~0.3 s from POST to response.
+- PoW stays at 16 bits. The SDK miner hashes candidates in batches of 1024
+  with WebCrypto in parallel (0.5–2.6 s in 4 desktop runs, against 1–3 s and
+  more before), and the site shows "sent" on click (`optimistic: true`) and
+  rolls back to the form with the error message if the POST fails.
 - Per-IP cap: 20/hour across forms (`rate_limits` rows with slug `_submit_ip`).
 - `wrangler deploy` with no `[triggers]` left the old cron in place; it was
   removed with `PUT …/workers/scripts/nostr-form-rs/schedules []`, and

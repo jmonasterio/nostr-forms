@@ -28,6 +28,7 @@ enum BookingOutcome {
 }
 
 /// Processor identity and at-rest recipient, read once per invocation.
+#[derive(Clone)]
 pub struct Keys {
     pub processor_pubkey: String,
     processor_sk_hex: String,
@@ -72,9 +73,18 @@ pub enum Outcome {
     Duplicate,
     /// Not stored. The reason is short and safe to return to a browser.
     Rejected(&'static str),
-    /// Stored. `delivered` is false when the DM to the form's notify key
-    /// failed; the row stays `pending` for `POST /admin/retry-pending`.
-    Stored { delivered: bool },
+    /// Stored in D1. The DM and owner email still have to go out:
+    /// pass this to [`deliver`] (`/submit` does it after responding).
+    Stored(Delivery),
+}
+
+/// Everything [`deliver`] needs, owned so it can outlive the request.
+pub struct Delivery {
+    event_id: String,
+    submitter_pubkey: String,
+    form: storage::Form,
+    plaintext: String,
+    booking_outcome: Option<BookingOutcome>,
 }
 
 /// Retry the DM for up to 20 `pending` rows. Returns how many were pending.
@@ -103,9 +113,10 @@ pub async fn retry_pending(env: &Env) -> Result<usize> {
 }
 
 /// dedupe → decrypt → resolve form (active?) → PoW → rate-limit → seal →
-/// insert → deliver → update status → owner email. The caller has already
-/// checked the envelope's id and signature (`submit::parse_and_check`).
-pub async fn process_event(env: &Env, db: &D1Database, keys: &Keys, event: &Event, now_secs: i64) -> Result<Outcome> {
+/// insert. Delivery is separate ([`deliver`]) so `/submit` can answer the
+/// browser as soon as the row is stored. The caller has already checked the
+/// envelope's id and signature (`submit::parse_and_check`).
+pub async fn process_event(db: &D1Database, keys: &Keys, event: &Event, now_secs: i64) -> Result<Outcome> {
     if storage::has_submission(db, &event.id).await? {
         return Ok(Outcome::Duplicate);
     }
@@ -174,9 +185,23 @@ pub async fn process_event(env: &Env, db: &D1Database, keys: &Keys, event: &Even
     let sealed = nip44_v2_encrypt(plaintext.as_bytes(), &keys.processor_sk_hex, &keys.archive_pubkey)
         .map_err(|e| Error::RustError(format!("seal at rest: {e}")))?;
     storage::insert_submission(db, event, &form.slug, &sealed, now_secs).await?;
+    Ok(Outcome::Stored(Delivery {
+        event_id: event.id.clone(),
+        submitter_pubkey: event.pubkey.clone(),
+        form,
+        plaintext,
+        booking_outcome,
+    }))
+}
 
-    // Deliver. Booking outcomes get dedicated messages (ICS on success);
-    // plain submissions keep the existing notify/full split.
+/// NIP-17 DM to the form's notify key (through the relay), then the owner
+/// email. Returns whether the DM went out; a failed DM leaves the row
+/// `pending` for `POST /admin/retry-pending`.
+pub async fn deliver(env: &Env, keys: &Keys, d: Delivery, now_secs: i64) -> bool {
+    let Delivery { event_id, submitter_pubkey, form, plaintext, booking_outcome } = d;
+
+    // Booking outcomes get dedicated messages (ICS on success); plain
+    // submissions keep the existing notify/full split.
     let (message, ok_status) = match &booking_outcome {
         Some(BookingOutcome::Booked { slot, starts_at, duration_min }) => {
             let ics = crate::booking::ics_vevent(
@@ -195,17 +220,24 @@ pub async fn process_event(env: &Env, db: &D1Database, keys: &Keys, event: &Even
             (notify::booking_invalid_message(&form.slug, slot, &plaintext), "slot_invalid")
         }
         None if form.delivery_mode == "notify" => {
-            (notify::notice_message(&form.slug, &event.pubkey), "delivered")
+            (notify::notice_message(&form.slug, &submitter_pubkey), "delivered")
         }
         None => (notify::full_message(&form.slug, &plaintext), "delivered"),
     };
     let delivered = match notify::publish_dm(env, &keys.processor_sk_bytes, &keys.processor_pubkey, &form.notify_pubkey, &message, now_secs as u64).await {
         Ok(()) => {
-            storage::set_delivery(db, &event.id, ok_status, true).await?;
+            match env.d1("FORMS") {
+                Ok(db) => {
+                    if let Err(e) = storage::set_delivery(&db, &event_id, ok_status, true).await {
+                        console_log!("process: set_delivery failed for {event_id}: {e:?}");
+                    }
+                }
+                Err(e) => console_log!("process: FORMS binding: {e:?}"),
+            }
             true
         }
         Err(e) => {
-            console_log!("process: delivery failed for {}: {e:?}", event.id);
+            console_log!("process: delivery failed for {event_id}: {e:?}");
             false
         }
     };
@@ -232,9 +264,9 @@ pub async fn process_event(env: &Env, db: &D1Database, keys: &Keys, event: &Even
         None => notify::alert_submission(&form.name, fields),
     };
     if let Err(e) = notify::send_alert(env, &alert).await {
-        console_log!("process: alert failed for {}: {e:?}", event.id);
+        console_log!("process: alert failed for {event_id}: {e:?}");
     }
-    Ok(Outcome::Stored { delivered })
+    delivered
 }
 
 

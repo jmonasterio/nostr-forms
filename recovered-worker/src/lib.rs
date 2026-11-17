@@ -43,7 +43,7 @@ mod worker_entry {
     }
 
     #[event(fetch)]
-    async fn fetch(req: Request, env: Env, _ctx: Context) -> Result<Response> {
+    async fn fetch(req: Request, env: Env, ctx: Context) -> Result<Response> {
         let path = req.path();
 
         if path.starts_with("/booking/") {
@@ -53,7 +53,7 @@ mod worker_entry {
             return crate::admin::handle(req, env).await;
         }
         if path == "/submit" {
-            return crate::submit_route::handle(req, env).await;
+            return crate::submit_route::handle(req, env, ctx).await;
         }
 
         match (req.method(), path.as_str()) {

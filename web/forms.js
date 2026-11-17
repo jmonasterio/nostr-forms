@@ -24,7 +24,13 @@
 let config = {
   submitUrl: 'https://forms.argw.com/submit',
   processorPubkey: null,
+  // Proof-of-work bits (NIP-13). The processor enforces each form's own
+  // `pow_difficulty`; `data-pow` on a form overrides this default.
   powDifficulty: 16,
+  // Call onSuccess(null, form) as soon as the user submits and send in the
+  // background; a failure then calls onError(err, form), which must undo
+  // whatever onSuccess showed. Needs both callbacks.
+  optimistic: false,
   onSuccess: null,
   onError: null,
   onProgress: null
@@ -35,9 +41,8 @@ let nostrTools = null;
 
 async function loadNostrTools() {
   if (nostrTools) return nostrTools;
-  
+
   try {
-    // Try loading from CDN
     nostrTools = await import('https://esm.sh/nostr-tools@2');
     return nostrTools;
   } catch (e) {
@@ -51,6 +56,8 @@ async function loadNostrTools() {
  */
 export function init(options) {
   config = { ...config, ...options };
+  // Start fetching nostr-tools now so the first submit does not wait on it.
+  loadNostrTools().catch(() => {});
   initForms();
 }
 
@@ -176,75 +183,46 @@ async function submitForm(form) {
  * Mine proof-of-work for an event
  */
 async function minePoW(event, difficulty, onProgress) {
-  const nt = await loadNostrTools();
-  
-  let nonce = 0;
+  // The NIP-01 id is sha256 of [0,pubkey,created_at,kind,tags,content]; only
+  // the nonce changes between attempts. Serialize once around a marker, then
+  // hash BATCH candidates at a time with WebCrypto running in parallel: the
+  // encrypted content follows the tags, so every attempt re-hashes the whole
+  // message and native SHA-256 is the fast path for that.
   const nonceTagIndex = event.tags.findIndex(t => t[0] === 'nonce');
-  
-  while (true) {
-    event.tags[nonceTagIndex] = ['nonce', nonce.toString(), difficulty.toString()];
-    
-    // Compute event ID
-    const serialized = JSON.stringify([
-      0,
-      event.pubkey,
-      event.created_at,
-      event.kind,
-      event.tags,
-      event.content
-    ]);
-    
-    const id = await sha256Hex(serialized);
-    
-    // Check leading zero bits
-    if (countLeadingZeroBits(id) >= difficulty) {
-      event.id = id;
-      return event;
+  const MARK = '__NONCE__';
+  event.tags[nonceTagIndex] = ['nonce', MARK, difficulty.toString()];
+  const [prefix, suffix] = JSON.stringify([
+    0, event.pubkey, event.created_at, event.kind, event.tags, event.content
+  ]).split(MARK);
+  const enc = new TextEncoder();
+  const BATCH = 1024;
+
+  for (let start = 0; ; start += BATCH) {
+    const digests = await Promise.all(Array.from({ length: BATCH }, (_, i) =>
+      crypto.subtle.digest('SHA-256', enc.encode(prefix + (start + i) + suffix))
+    ));
+    for (let i = 0; i < BATCH; i++) {
+      const digest = new Uint8Array(digests[i]);
+      if (leadingZeroBits(digest) >= difficulty) {
+        event.tags[nonceTagIndex] = ['nonce', String(start + i), difficulty.toString()];
+        event.id = Array.from(digest, b => b.toString(16).padStart(2, '0')).join('');
+        return event;
+      }
     }
-    
-    nonce++;
-    
-    // Progress callback
-    if (nonce % 5000 === 0 && onProgress) {
-      onProgress('mining', { nonce, difficulty });
-    }
-    
-    // Yield to prevent blocking
-    if (nonce % 10000 === 0) {
-      await new Promise(resolve => setTimeout(resolve, 0));
-    }
+    if (onProgress && start % (BATCH * 16) === 0) onProgress('mining', { nonce: start, difficulty });
   }
 }
 
 /**
- * Count leading zero bits in a hex string
+ * Count leading zero bits of a byte array
  */
-function countLeadingZeroBits(hexStr) {
+function leadingZeroBits(bytes) {
   let count = 0;
-  for (const char of hexStr) {
-    const nibble = parseInt(char, 16);
-    if (nibble === 0) {
-      count += 4;
-    } else {
-      // Count leading zeros in this nibble
-      if (nibble < 8) count += 1;
-      if (nibble < 4) count += 1;
-      if (nibble < 2) count += 1;
-      break;
-    }
+  for (const b of bytes) {
+    if (b === 0) { count += 8; continue; }
+    return count + Math.clz32(b) - 24;
   }
   return count;
-}
-
-/**
- * SHA-256 hash to hex
- */
-async function sha256Hex(data) {
-  const encoder = new TextEncoder();
-  const dataBuffer = encoder.encode(data);
-  const hashBuffer = await crypto.subtle.digest('SHA-256', dataBuffer);
-  const hashArray = Array.from(new Uint8Array(hashBuffer));
-  return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
 /**
@@ -260,7 +238,10 @@ async function postEvent(event, submitUrl) {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(event),
-      signal: controller.signal
+      signal: controller.signal,
+      // The page may already say "sent" (optimistic mode); let the request
+      // finish if the visitor navigates away.
+      keepalive: true
     });
     let body = null;
     try { body = await resp.json(); } catch (_) { /* non-JSON error page */ }
@@ -279,24 +260,28 @@ async function postEvent(event, submitUrl) {
 async function handleSubmit(e) {
   e.preventDefault();
   const form = e.target;
-  
+  if (form.classList.contains('submitting')) return;
+
   form.classList.add('submitting');
   const submitBtn = form.querySelector('button[type="submit"], input[type="submit"]');
   if (submitBtn) submitBtn.disabled = true;
-  
+
+  const optimistic = config.optimistic && config.onSuccess && config.onError;
+  if (optimistic) config.onSuccess(null, form);
+
   try {
     const eventId = await submitForm(form);
-    
-    if (config.onSuccess) {
-      config.onSuccess(eventId);
+    if (optimistic) {
+      // Already shown.
+    } else if (config.onSuccess) {
+      config.onSuccess(eventId, form);
     } else {
       form.innerHTML = '<p class="nostr-form-success">Thank you! Your message has been sent.</p>';
     }
   } catch (err) {
     console.error('Form submission failed:', err);
-    
     if (config.onError) {
-      config.onError(err);
+      config.onError(err, form);
     } else {
       alert('Failed to send message: ' + err.message);
     }
