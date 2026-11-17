@@ -1,5 +1,5 @@
 //! Admin HTTP surface (wasm). Serves the dashboard UI and a NIP-98-gated
-//! JSON API for forms CRUD, submission listing, and manual poll.
+//! JSON API for forms CRUD, submission listing, and pending-DM retry.
 //!
 //! Auth model (ADMIN-UI-PLAN §D2): every mutating/reading API call carries a
 //! NIP-98 `Authorization: Nostr <event>` signed by the admin's NIP-07 key.
@@ -12,7 +12,7 @@ use serde_json::json;
 use worker::*;
 
 use crate::nip98;
-use crate::poll;
+use crate::process;
 use crate::storage;
 
 const ADMIN_UI: &str = include_str!("admin/index.html");
@@ -57,9 +57,9 @@ pub async fn handle(mut req: Request, env: Env) -> Result<Response> {
 
     // ---- authenticated routes ----
     match (method.clone(), path.as_str()) {
-        (Method::Post, "/admin/poll-now") => {
-            poll::run_once(&env).await?;
-            Response::ok("polled")
+        (Method::Post, "/admin/retry-pending") => {
+            let n = process::retry_pending(&env).await?;
+            Response::ok(format!("retried {n} pending"))
         }
         (Method::Get, "/admin/forms") => {
             let forms = storage::list_forms(&db).await?;

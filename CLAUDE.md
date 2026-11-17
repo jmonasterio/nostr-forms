@@ -1,28 +1,37 @@
 # nostr-form-rs — Project Context for AI Agents
 
+**Submissions were refused from 2026-07-26 to 2026-11-17.** Relay commit
+`52e1acc` removed anonymous writes, and `forms.js` published with a throwaway
+key over an anonymous socket, so the relay answered `auth-required` and
+nothing reached D1. Fixed 2026-11-17: `forms.js` POSTs to
+`forms.argw.com/submit`, the Worker processes each submission inline, and
+the every-minute poll cron is gone. Plan and test record:
+`recovered-worker/SUBMIT-PLAN.md`. The live Worker is now built from
+`recovered-worker/` (deployed 2026-11-17); the 2026-06-16 bundle in
+`deployed-worker-2026-06-16/` is the rollback.
+
 ## Deployment
 
-**Status (verified live 2026-07-24): the form pipeline IS deployed and
-running, entirely on Cloudflare.** Do not "restore" it, do not stand up a
-VPS, and do not deploy this working tree over it — see the warning at the
-end of this section.
+**Status (updated 2026-11-17): the form pipeline is deployed and running,
+entirely on Cloudflare, built from `recovered-worker/`.** Do not deploy the
+repo root (the retired droplet binary) anywhere.
 
 ### Live topology (probed, not assumed)
 
 | Piece | Where | Evidence |
 |---|---|---|
 | Marketing site + forms | `executiveaiguidance.com` — CF Pages project `executiveaiguidance-com`, deployed from `../executive-ai-training` (`deploy.sh` → `wrangler pages deploy html/`) | Serves the real site; `/forms.js`, `/main.js`, `/booking.js` all 200 |
-| Form SDK config | `html/main.js` → `NostrForms.init({ relayUrl: 'wss://relay.argw.com', processorPubkey: '43100984…' })` | Read from the live JS |
+| Form SDK config | `html/main.js` → `NostrForms.init({ processorPubkey: '43100984…' })`; `submitUrl` defaults to `https://forms.argw.com/submit` in `web/forms.js` (copied into the site at deploy) | Live submission 2026-11-17 → 200, row `delivered` |
 | Live forms | `MpAETNds` (contact), `vgFZPC9h` (booking, `data-pow="16"`), `bGFqnzYT` (newsletter) | `data-nostr-form` attrs on the live `/contact` page |
 | Relay | `wss://relay.argw.com` — CF Worker + Durable Object (`../nostr-relay-rs`) | NIP-11 doc responds |
-| **Form processor + admin API** | **`forms.argw.com` — a live CF Worker** | `/admin/config` → 200 JSON with the real admin + processor pubkeys; `/admin/forms`, `/admin/submissions`, `/admin/slots`, `/admin/poll-now` → 401 `unauthorized: missing or malformed Authorization header` |
+| **Form processor + admin API** | **`forms.argw.com` — a live CF Worker** (no cron) | `/submit` POST from the site → 200; `/admin/config` → 200; other `/admin/*` → 401 without NIP-98 |
 | Booking widget backend | `forms.argw.com` | `booking.js` fetches it directly |
 
 Submission path: browser NIP-44-encrypts to the processor pubkey, mines
-NIP-13 PoW, publishes to `wss://relay.argw.com` tagged `#p=43100984…`; the
-`forms.argw.com` Worker holds the processor key, ingests, and exposes
-everything through its NIP-98-authenticated `/admin/*` API and dashboard at
-`forms.argw.com/admin`.
+NIP-13 PoW, signs with a throwaway key and POSTs the event to
+`forms.argw.com/submit`; the Worker holds the processor key, processes it
+inline, and exposes everything through its NIP-98-authenticated `/admin/*`
+API and dashboard at `forms.argw.com/admin`.
 
 ### The deployed code is NOT this working tree
 

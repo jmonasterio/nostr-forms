@@ -15,8 +15,8 @@ compatibility_date = "2025-01-01"
 command = "worker-build --release"
 
 # In-account service binding to the relay Worker. `env.RELAY.fetch(...)` —
-# no network hop; the poll reads via /admin/poll and publishes via
-# /admin/publish, both gated by ADMIN_INTERNAL_TOKEN.
+# no network hop; NIP-17 DMs to each form's notify key are published via
+# /admin/publish, gated by ADMIN_INTERNAL_TOKEN.
 [[services]]
 binding = "RELAY"
 service = "nostr-relay"
@@ -30,23 +30,27 @@ service = "nostr-notify"
 environment = "production"
 
 # D1: replaces argw's `forms.db`. Schema in `src/schema.rs::DDL_STATEMENTS`,
-# applied idempotently by `storage::ensure_schema` on every poll.
+# applied idempotently by `storage::ensure_schema` on every request.
 [[d1_databases]]
 binding = "FORMS"
 database_name = "nostr-form-rs"
 database_id = "f4dc3389-d2e4-4119-a196-510c97ebe585"
 
+# No cron. Explicitly empty: without this, `wrangler deploy` leaves any
+# existing trigger in place (the old `* * * * *` poll survived a deploy on
+# 2026-11-17 until it was removed through the schedules API).
 [triggers]
-# Every minute. The poll handler walks since=cursors.envelope_since to now.
-crons = ["* * * * *"]
+crons = []
 
 [vars]
-# Pubkey we tell the relay to filter on (mailbox recipient = us).
+# Processor pubkey: SDK envelopes are NIP-44-encrypted to it and #p-tag it.
 PROCESSOR_PUBKEY = "43100984ca619f567af6863c551c7c9ce5b75caead212e9334ca8cc88c9bc6c6"
 # Admin pubkey allowed to use the NIP-98 /admin/* API.
 ADMIN_PUBKEY = "777d0ead9065a316d57773164ac4d013708f30f1235f089e12c22c4bbe4b625a"
 # PoW threshold for inbound submissions (matches relay default).
 DEFAULT_POW_BITS = "16"
+# Origins allowed to POST /submit from a browser (comma-separated, exact).
+SUBMIT_ORIGINS = "https://executiveaiguidance.com,https://www.executiveaiguidance.com"
 
 # Secrets — set via `wrangler secret put`:
 #   PROCESSOR_NSEC       — processor hex secret key (NIP-44 decrypt + DM signing)

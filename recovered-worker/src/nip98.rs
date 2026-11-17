@@ -71,10 +71,10 @@ pub fn verify(
     }
 
     // id integrity + signature.
-    if compute_id(&event) != event.id {
+    if event.compute_id() != event.id {
         return Err(AuthError::IdMismatch);
     }
-    if !verify_signature(&event) {
+    if !event.verify_signature() {
         return Err(AuthError::BadSignature);
     }
 
@@ -129,47 +129,4 @@ fn hex_sha256(data: &[u8]) -> String {
     let mut h = Sha256::new();
     h.update(data);
     hex::encode(h.finalize())
-}
-
-/// Canonical NIP-01 id: sha256 of `[0,pubkey,created_at,kind,tags,content]`.
-fn compute_id(event: &Event) -> String {
-    let serialized = serde_json::to_string(&(
-        0u8,
-        &event.pubkey,
-        event.created_at,
-        event.kind,
-        &event.tags,
-        &event.content,
-    ))
-    .unwrap_or_default();
-    let mut h = Sha256::new();
-    h.update(serialized.as_bytes());
-    hex::encode(h.finalize())
-}
-
-/// BIP-340 verify on the 32-byte id (mirrors `nostr-relay::nip01`).
-fn verify_signature(event: &Event) -> bool {
-    use k256::schnorr::{Signature as SchnorrSig, VerifyingKey};
-
-    let pk_bytes = match hex::decode(&event.pubkey) {
-        Ok(b) if b.len() == 32 => b,
-        _ => return false,
-    };
-    let vk = match VerifyingKey::from_bytes(&pk_bytes) {
-        Ok(v) => v,
-        Err(_) => return false,
-    };
-    let sig_bytes = match hex::decode(&event.sig) {
-        Ok(b) if b.len() == 64 => b,
-        _ => return false,
-    };
-    let sig = match SchnorrSig::try_from(sig_bytes.as_slice()) {
-        Ok(s) => s,
-        Err(_) => return false,
-    };
-    let id_bytes = match hex::decode(&event.id) {
-        Ok(b) if b.len() == 32 => b,
-        _ => return false,
-    };
-    vk.verify_raw(&id_bytes, &sig).is_ok()
 }

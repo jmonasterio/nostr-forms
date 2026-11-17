@@ -2,17 +2,18 @@
 
 Nostr form processor + booking ("Calendly clone") + admin dashboard.
 Successor to the Rust daemon that ran on argw. Browsers encrypt form
-submissions to a processor pubkey and publish them to the relay; this
-Worker polls, decrypts, stores them **encrypted at rest** in D1, and
-delivers each as an encrypted Nostr DM. The owner reads/manages everything
-from a NIP-98-gated web dashboard.
+submissions to a processor pubkey and POST the signed event to
+`/submit`; this Worker decrypts, stores them **encrypted at rest** in D1,
+delivers each as an encrypted Nostr DM, and emails the owner. The owner
+reads/manages everything from a NIP-98-gated web dashboard.
 
 ## Status
 
 **Live.** Worker `nostr-form-rs`, D1 `nostr-form-rs`
-(`f4dc3389-d2e4-4119-a196-510c97ebe585`), service binding → `nostr-relay`,
-cron `* * * * *`. Admin dashboard at **https://forms.argw.com/admin**
-(Custom Domain) and the `*.workers.dev` URL.
+(`f4dc3389-d2e4-4119-a196-510c97ebe585`), service bindings → `nostr-relay`
+(DM publish) and `nostr-notify` (email). No cron since 2026-11-17. Admin
+dashboard at **https://forms.argw.com/admin** (Custom Domain) and the
+`*.workers.dev` URL.
 
 Design contracts: `ADMIN-UI-PLAN.md` (auth, encrypt-at-rest, delivery) and
 `BOOKING-PLAN.md` (slot math).
@@ -20,15 +21,16 @@ Design contracts: `ADMIN-UI-PLAN.md` (auth, encrypt-at-rest, delivery) and
 ## Flows
 
 ```
-Inbound (cron, every minute):
-  browser ──NIP-44 encrypt to PROCESSOR_PUBKEY──▶ relay (kind 4/1059, #p=processor, PoW)
-     this worker:  /admin/poll (service binding) → decrypt → resolve form (form_id)
+Inbound (HTTP, per submission):
+  browser ──NIP-44 encrypt to PROCESSOR_PUBKEY, PoW, sign──▶ POST /submit (kind 4, #p=processor)
+     this worker:  id + sig + created_at ±10 min + per-IP limit → decrypt → resolve form (form_id)
                    → PoW + per-form rate limit → SEAL to ADMIN_PUBKEY → INSERT (D1)
-                   → deliver: NIP-17 gift wrap → notify_pubkey  via /admin/publish
+                   → deliver: NIP-17 gift wrap → notify_pubkey  via relay /admin/publish
+                   → owner email via NOTIFY
 
 Admin (HTTP, NIP-98-gated):
   browser (nostr-universal login) ──Authorization: Nostr <kind-27235>──▶ /admin/*
-                   forms CRUD · submissions (decrypted server-side) · poll-now
+                   forms CRUD · submissions (decrypted server-side) · retry-pending
 ```
 
 ## Security model (see ADMIN-UI-PLAN.md)
@@ -48,14 +50,15 @@ Admin (HTTP, NIP-98-gated):
   exists in the vendored `nostr-universal` and can be re-enabled.)
 - **Delivery:** `delivery_mode=full` → NIP-17 gift wrap with the full
   submission to the form's `notify_pubkey`; `notify` → metadata-only DM.
-  Failed deliveries retry metadata-only.
+  Failed DMs stay `pending`; `POST /admin/retry-pending` retries them
+  metadata-only. The owner email is sent either way.
 
 ## D1 schema (`schema.rs` / `migrate.sql`)
 
 `forms` (routing config: slug, notify_pubkey, pow_difficulty,
 rate_limit_per_hour, delivery_mode, status, options_json) ·
 `submissions` (index cols + `sealed_json`) · `rate_limits` (per form+sender,
-hourly) · `cursors` (relay poll high-water mark) · `admin_pubkeys`
+hourly; also `_submit_ip` rows for the per-IP cap) · `admin_pubkeys`
 (NIP-98 admin set) · `auth_nonces` (replay guard).
 
 `ensure_schema` runs the `IF NOT EXISTS` DDL on every request; `migrate.sql`

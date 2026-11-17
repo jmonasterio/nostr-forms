@@ -14,7 +14,7 @@
  *   <script type="module">
  *     import { NostrForms } from './forms.js';
  *     NostrForms.init({
- *       relayUrl: 'wss://relay.example.com',
+ *       submitUrl: 'https://forms.argw.com/submit',
  *       processorPubkey: '...'
  *     });
  *   </script>
@@ -22,7 +22,7 @@
 
 // Configuration
 let config = {
-  relayUrl: null,
+  submitUrl: 'https://forms.argw.com/submit',
   processorPubkey: null,
   powDifficulty: 16,
   onSuccess: null,
@@ -70,7 +70,7 @@ async function submitForm(form) {
   const formId = form.dataset.nostrForm;
   const allowAuth = form.dataset.allowAuth === 'true';
   const formPow = form.dataset.pow ? parseInt(form.dataset.pow) : config.powDifficulty;
-  const formRelay = form.dataset.relay || config.relayUrl;
+  const submitUrl = config.submitUrl;
   const processorPubkey = config.processorPubkey;
   
   if (!formId) {
@@ -81,8 +81,8 @@ async function submitForm(form) {
     throw new Error('processorPubkey not configured');
   }
   
-  if (!formRelay) {
-    throw new Error('relayUrl not configured');
+  if (!submitUrl) {
+    throw new Error('submitUrl not configured');
   }
   
   // Collect form data
@@ -165,9 +165,9 @@ async function submitForm(form) {
   // Sign event
   const signedEvent = await signEvent(event);
   
-  // Publish to relay
+  // Submit to the form processor
   if (config.onProgress) config.onProgress('publishing');
-  const eventId = await publishEvent(signedEvent, formRelay);
+  const eventId = await postEvent(signedEvent, submitUrl);
   
   return eventId;
 }
@@ -248,55 +248,29 @@ async function sha256Hex(data) {
 }
 
 /**
- * Publish event to relay
+ * POST the signed event to the form processor's /submit endpoint.
+ * The relay no longer accepts anonymous writes (nostr-relay-rs 52e1acc,
+ * 2026-07-26), so the processor takes the event directly.
  */
-async function publishEvent(event, relayUrl) {
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(relayUrl);
-    let resolved = false;
-    
-    ws.onopen = () => {
-      const msg = JSON.stringify(['EVENT', event]);
-      ws.send(msg);
-    };
-    
-    ws.onmessage = (e) => {
-      try {
-        const msg = JSON.parse(e.data);
-        if (msg[0] === 'OK' && msg[1] === event.id) {
-          resolved = true;
-          ws.close();
-          if (msg[2]) {
-            resolve(event.id);
-          } else {
-            reject(new Error(msg[3] || 'Event rejected by relay'));
-          }
-        }
-      } catch (err) {
-        // Ignore parse errors
-      }
-    };
-    
-    ws.onerror = () => {
-      if (!resolved) {
-        reject(new Error('WebSocket error'));
-      }
-    };
-    
-    ws.onclose = () => {
-      if (!resolved) {
-        reject(new Error('Connection closed before confirmation'));
-      }
-    };
-    
-    // Timeout
-    setTimeout(() => {
-      if (!resolved) {
-        ws.close();
-        reject(new Error('Timeout waiting for relay response'));
-      }
-    }, 30000);
-  });
+async function postEvent(event, submitUrl) {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 30000);
+  try {
+    const resp = await fetch(submitUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(event),
+      signal: controller.signal
+    });
+    let body = null;
+    try { body = await resp.json(); } catch (_) { /* non-JSON error page */ }
+    if (!resp.ok || !body || !body.ok) {
+      throw new Error((body && body.reason) || `Submit failed (HTTP ${resp.status})`);
+    }
+    return body.id;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 /**
@@ -342,18 +316,9 @@ function initForms() {
   });
 }
 
-// Auto-init on DOM ready if not using ES modules
+// Expose for non-module callers. `init()` attaches the submit handlers.
 if (typeof window !== 'undefined') {
   window.NostrForms = { init, submit };
-  
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', () => {
-      // Only auto-init if config was set via global
-      if (config.relayUrl && config.processorPubkey) {
-        initForms();
-      }
-    });
-  }
 }
 
 export const NostrForms = { init, submit };

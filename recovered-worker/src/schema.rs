@@ -3,11 +3,10 @@
 //! - `submissions` — cleartext index columns + `sealed_json`
 //!   (NIP-44-encrypted-to-admin payload; never plaintext at rest).
 //! - `rate_limits` — per-form, per-submitter sliding window.
-//! - `cursors` — relay poll high-water mark.
 //! - `admin_pubkeys` — NIP-98 admin set.
 //! - `auth_nonces` — NIP-98 replay guard (seen event ids).
 //!
-//! `ensure_schema` runs these `IF NOT EXISTS` on every poll/request; the
+//! `ensure_schema` runs these `IF NOT EXISTS` on every request; the
 //! one-time `migrate.sql` reshapes any pre-Phase-3.5 tables.
 
 pub const DDL_STATEMENTS: &[&str] = &[
@@ -42,11 +41,6 @@ pub const DDL_STATEMENTS: &[&str] = &[
         window_start     INTEGER NOT NULL,
         count            INTEGER NOT NULL,
         PRIMARY KEY (form_slug, submitter_pubkey, window_start)
-    )"#,
-    r#"CREATE TABLE IF NOT EXISTS cursors (
-        name       TEXT PRIMARY KEY,
-        value      INTEGER NOT NULL,
-        updated_at INTEGER NOT NULL
     )"#,
     r#"CREATE TABLE IF NOT EXISTS admin_pubkeys (
         pubkey   TEXT PRIMARY KEY,

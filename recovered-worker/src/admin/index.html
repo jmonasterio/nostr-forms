@@ -52,7 +52,7 @@
     <button data-tab="forms" class="active">Forms</button>
     <button data-tab="subs">Submissions</button>
     <button data-tab="slots">Booking</button>
-    <button id="pollBtn">Poll now</button>
+    <button id="pollBtn">Retry pending DMs</button>
     <span id="msg" class="muted"></span>
   </nav>
 
@@ -278,7 +278,7 @@ $("loadSlots").onclick = loadSlots;
 $("saveForm").onclick = saveForm;
 $("clearForm").onclick = () => fillForm(null);
 $("loadSubs").onclick = loadSubs;
-$("pollBtn").onclick = async () => { try { setMsg($("msg"), "polling…"); await api("POST", "/admin/poll-now"); setMsg($("msg"), "polled", "ok"); } catch (e) { setMsg($("msg"), e.message, "err"); } };
+$("pollBtn").onclick = async () => { try { setMsg($("msg"), "retrying…"); const t = await api("POST", "/admin/retry-pending"); setMsg($("msg"), typeof t === "string" ? t : "retried", "ok"); } catch (e) { setMsg($("msg"), e.message, "err"); } };
 $("logoutBtn").onclick = () => { auth.logoutAll(); location.reload(); };
 
 (async () => {

@@ -4,16 +4,16 @@ Operational runbook for the live Worker (overview is in `README.md`).
 The processor is **deployed and live**; this covers re-deploys, disaster
 recovery, and migration.
 
-## Local smoke
+## Staging smoke
 
-`form_smoke` in `../nostr-relay-harness` exercises the pipeline against a
-local relay:
-
-```bash
-cd src/nostr-relay && cmd /c "start /B _run-dev.bat"   # or `wrangler dev`
-cd ../nostr-relay-harness && cargo run --release --bin form_smoke
-# ✓ AUTH → EVENT publish → /admin/poll → NIP-44 v2 decrypt → plaintext match
-```
+`wrangler.staging.toml` deploys `nostr-form-rs-v2` (scratch D1, throwaway
+processor key, `SUBMIT_ORIGINS = http://localhost:8766`). Serve a page on
+`localhost:8766` that loads `web/forms.js` with `submitUrl` pointing at the
+staging `/submit` and the staging `PROCESSOR_PUBKEY`, seed a form row in the
+scratch D1, and submit it in a browser. Expect `200 {"ok":true}` and a row in
+the scratch `submissions`. The staging DM step answers 403 (staging's
+`ADMIN_INTERNAL_TOKEN` does not match the relay's), so its rows stay
+`pending`. Staging also calls NOTIFY, so expect an owner email per test.
 
 Crypto is also covered natively: `cd src/nostr-form-rs && cargo test`
 (nip44 round-trip + spec vectors, nip98 auth, nip17 gift wrap).
@@ -57,7 +57,7 @@ deploy time).
 ```bash
 cd src/nostr-form-rs
 NODE_OPTIONS=--dns-result-order=ipv4first wrangler deploy
-wrangler tail            # watch the first cron tick (cron: every minute)
+wrangler tail            # watch the next /submit
 ```
 
 - IPv6 black-holes on this LAN — wrangler may fail the first 1–4 calls;
@@ -93,16 +93,13 @@ The droplet is retired; snapshots live in `../../backups/argw/` (e.g.
    HDR=$(cargo run -q --example admin_tool -- nip98 <admin_sk> GET "$B/admin/forms")
    curl -s -H "Authorization: $HDR" "$B/admin/forms"      # → forms JSON (401 without/with bad token)
    ```
-2. **Full round-trip** — mine + publish a submission, then confirm it lands
-   decrypted:
+2. **Full round-trip** — submit a form on executiveaiguidance.com (or POST
+   a signed envelope to `/submit`), then confirm it lands:
    ```bash
-   cargo run -q --example admin_tool -- submission <PROCESSOR_PUBKEY> <form_slug> "hello" 16 > sub.json
-   curl -s --resolve relay.argw.com:443:<cf-edge-ip> -X POST https://relay.argw.com/admin/publish \
-     -H "X-Admin-Token: <ADMIN_INTERNAL_TOKEN>" -H "Content-Type: application/json" --data @sub.json
-   # next cron tick (or POST /admin/poll-now with a NIP-98 header) processes it
    wrangler d1 execute nostr-form-rs --remote --command \
      "SELECT event_id, form_slug, delivery_status, received_at FROM submissions ORDER BY received_at DESC LIMIT 5"
    ```
+   Expect `delivered` and an owner email.
 3. **Dashboard** — open https://forms.argw.com/admin, sign in (extension /
    NIP-46 / key via `nostr-universal`), confirm forms list + decrypted
    submissions render. Remember to clean up any test rows afterward.

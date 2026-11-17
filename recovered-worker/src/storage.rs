@@ -1,4 +1,4 @@
-//! D1 helpers (Phase 3.5). Schema bootstrap, cursor, dedupe, forms
+//! D1 helpers (Phase 3.5). Schema bootstrap, dedupe, forms
 //! registry, sealed-submission insert, per-form rate limiting, NIP-98
 //! admin set + replay nonces, and admin-API read/write queries.
 //!
@@ -6,13 +6,11 @@
 //! `BigInt` which D1 rejects, so every integer bind goes through `as f64`.
 
 use serde::{Deserialize, Serialize};
-use serde_json::json;
 use worker::*;
 
 use crate::event::Event;
 use crate::schema;
 
-const CURSOR_NAME: &str = "envelope_since";
 /// Rate-limit window length (seconds). Per-form cap is `rate_limit_per_hour`.
 const RATE_WINDOW_SECS: i64 = 3600;
 /// NIP-98 replay nonces older than this are pruned / rejected.
@@ -22,32 +20,6 @@ pub async fn ensure_schema(db: &D1Database) -> Result<()> {
     for stmt in schema::DDL_STATEMENTS {
         db.prepare(*stmt).run().await?;
     }
-    Ok(())
-}
-
-// ---------- cursor ----------
-
-#[derive(Debug, Deserialize)]
-struct CursorRow {
-    value: i64,
-}
-
-pub async fn get_cursor(db: &D1Database) -> Result<i64> {
-    let stmt = db
-        .prepare("SELECT value FROM cursors WHERE name = ?1")
-        .bind(&[CURSOR_NAME.into()])?;
-    let row: Option<CursorRow> = stmt.first(None).await?;
-    Ok(row.map(|r| r.value).unwrap_or(0))
-}
-
-pub async fn set_cursor(db: &D1Database, value: i64, now_secs: i64) -> Result<()> {
-    db.prepare(
-        "INSERT INTO cursors(name, value, updated_at) VALUES (?1, ?2, ?3) \
-         ON CONFLICT(name) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at",
-    )
-    .bind(&[CURSOR_NAME.into(), (value as f64).into(), (now_secs as f64).into()])?
-    .run()
-    .await?;
     Ok(())
 }
 
@@ -445,17 +417,4 @@ pub async fn nonce_check_and_store(db: &D1Database, event_id: &str, now: i64) ->
         .run()
         .await?;
     Ok(true)
-}
-
-// ---------- relay poll filter ----------
-
-/// The filter the poll handler sends to the relay: NIP-44 envelopes
-/// (kinds 4 / 1059) addressed to the processor since the cursor.
-pub fn build_poll_filter(processor_pubkey: &str, since: i64) -> serde_json::Value {
-    json!({
-        "kinds": [4, 1059],
-        "#p": [processor_pubkey],
-        "since": since,
-        "limit": 500
-    })
 }

@@ -3,6 +3,7 @@
 //! kept local so this crate doesn't carry the relay crate as a dependency.
 
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Event {
@@ -26,5 +27,49 @@ impl Event {
             }
         }
         None
+    }
+
+    /// Canonical NIP-01 id: sha256 of `[0,pubkey,created_at,kind,tags,content]`.
+    pub fn compute_id(&self) -> String {
+        let serialized = serde_json::to_string(&(
+            0u8,
+            &self.pubkey,
+            self.created_at,
+            self.kind,
+            &self.tags,
+            &self.content,
+        ))
+        .unwrap_or_default();
+        let mut h = Sha256::new();
+        h.update(serialized.as_bytes());
+        hex::encode(h.finalize())
+    }
+
+    /// BIP-340 verify of `sig` over `id` by `pubkey` (mirrors `nostr-relay::nip01`).
+    /// Does not recompute the id; pair with [`Event::compute_id`].
+    pub fn verify_signature(&self) -> bool {
+        use k256::schnorr::{Signature as SchnorrSig, VerifyingKey};
+
+        let pk_bytes = match hex::decode(&self.pubkey) {
+            Ok(b) if b.len() == 32 => b,
+            _ => return false,
+        };
+        let vk = match VerifyingKey::from_bytes(&pk_bytes) {
+            Ok(v) => v,
+            Err(_) => return false,
+        };
+        let sig_bytes = match hex::decode(&self.sig) {
+            Ok(b) if b.len() == 64 => b,
+            _ => return false,
+        };
+        let sig = match SchnorrSig::try_from(sig_bytes.as_slice()) {
+            Ok(s) => s,
+            Err(_) => return false,
+        };
+        let id_bytes = match hex::decode(&self.id) {
+            Ok(b) if b.len() == 32 => b,
+            _ => return false,
+        };
+        vk.verify_raw(&id_bytes, &sig).is_ok()
     }
 }
